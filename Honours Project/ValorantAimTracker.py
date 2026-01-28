@@ -335,7 +335,8 @@ import os
 video_path = os.path.join(os.path.dirname(__file__), 'testVid.mp4')
 
 # Run single-threaded version
+print("Running single-threaded detection...\n")
 detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_display=5)
-
+print("Running multithreaded detection...\n")
 # Run multithreaded version
 detect_enemies_in_video(video_path, max_detected_frames_to_display=5, num_workers=4)
