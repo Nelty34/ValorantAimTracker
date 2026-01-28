@@ -120,8 +120,11 @@ def detect_enemies_in_video(video_path, max_detected_frames_to_display=10, num_w
     detected_frames = []
     
     if frames_to_process:
-        with Pool(processes=num_workers) as pool:
-            results = pool.imap_unordered(_process_frame, frames_to_process, chunksize=4)
+        # Use spawn context for more predictable process creation and model initialization
+        ctx = mp.get_context('spawn')
+        with ctx.Pool(processes=num_workers) as pool:
+            # Higher chunksize reduces task scheduling overhead
+            results = pool.imap_unordered(_process_frame, frames_to_process, chunksize=8)
             
             processed_count = 0
             for result in results:
