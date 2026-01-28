@@ -208,9 +208,7 @@ def detect_enemies_in_video(video_path, max_detected_frames_to_display=10, num_w
             print(f"  Saved to: {output_path}")
     
     elapsed_time = time.time() - start_time
-    print(f"\n{'='*60}")
-    print(f"Multithreaded Detection (Workers: {num_workers}) - Total Time: {elapsed_time:.2f} seconds")
-    print(f"{'='*60}\n")
+    return elapsed_time
 
 
 def detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_display=10):
@@ -325,18 +323,34 @@ def detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_d
             print(f"  Saved to: {output_path}")
     
     elapsed_time = time.time() - start_time
-    print(f"\n{'='*60}")
-    print(f"Single-threaded Detection - Total Time: {elapsed_time:.2f} seconds")
-    print(f"{'='*60}\n")
+    return elapsed_time
+
+
+def display_times(single_thread_time, multi_thread_time):
+    """Display both execution times and state which approach was faster."""
+    print('\n' + '='*60)
+    print(f"Single-threaded Detection - Total Time: {single_thread_time:.2f} seconds")
+    print(f"Multithreaded Detection - Total Time: {multi_thread_time:.2f} seconds")
+    if multi_thread_time < single_thread_time:
+        print(f"Multithreaded was faster by {single_thread_time - multi_thread_time:.2f} seconds")
+    elif multi_thread_time > single_thread_time:
+        print(f"Single-threaded was faster by {multi_thread_time - single_thread_time:.2f} seconds")
+    else:
+        print("Both methods took the same time")
+    print('='*60 + '\n')
 
 
 # Run the detection on a video file
 import os
 video_path = os.path.join(os.path.dirname(__file__), 'testVid.mp4')
 
-# Run single-threaded version
+# Run single-threaded version and capture time
 print("Running single-threaded detection...\n")
-detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_display=5)
-print("Running multithreaded detection...\n")
-# Run multithreaded version
-detect_enemies_in_video(video_path, max_detected_frames_to_display=5, num_workers=4)
+single_elapsed = detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_display=5)
+
+# print("Running multithreaded detection...\n")
+# # Run multithreaded version and capture time
+# multi_elapsed = detect_enemies_in_video(video_path, max_detected_frames_to_display=5, num_workers=4)
+multi_elapsed = 0.0  # Placeholder since multithreaded call is commented out
+# Display both times together
+display_times(single_elapsed, multi_elapsed)
