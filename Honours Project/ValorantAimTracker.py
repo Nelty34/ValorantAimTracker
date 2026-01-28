@@ -212,16 +212,6 @@ def detect_enemies_in_video(video_path, max_detected_frames_to_display=10, num_w
     print(f"Multithreaded Detection (Workers: {num_workers}) - Total Time: {elapsed_time:.2f} seconds")
     print(f"{'='*60}\n")
 
-#Run the detection on a video file
-import os
-video_path = os.path.join(os.path.dirname(__file__), 'testVid.mp4')
-
-# Run single-threaded version
-detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_display=5)
-
-# Run multithreaded version
-detect_enemies_in_video(video_path, max_detected_frames_to_display=5, num_workers=4)
-
 
 def detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_display=10):
     """
@@ -338,3 +328,14 @@ def detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_d
     print(f"\n{'='*60}")
     print(f"Single-threaded Detection - Total Time: {elapsed_time:.2f} seconds")
     print(f"{'='*60}\n")
+
+
+# Run the detection on a video file
+import os
+video_path = os.path.join(os.path.dirname(__file__), 'testVid.mp4')
+
+# Run single-threaded version
+detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_display=5)
+
+# Run multithreaded version
+detect_enemies_in_video(video_path, max_detected_frames_to_display=5, num_workers=4)
