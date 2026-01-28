@@ -72,12 +72,13 @@ def detect_enemies_in_video(video_path, max_detected_frames_to_display=10):
                     class_id = int(box.cls[0])
                     class_name = model.names[class_id]
                     
-                    # Filter for enemy class
-                    if 'enemy' in class_name.lower():
+                    # Filter for enemy class with confidence threshold of 0.8
+                    confidence = float(box.conf[0])
+                    if 'enemy' in class_name.lower() and confidence >= 0.8:
                         enemy_detections.append({
                             'frame': frame_count,
                             'class': class_name,
-                            'confidence': float(box.conf[0]),
+                            'confidence': confidence,
                             'box': box.xyxy[0].cpu().numpy()
                         })
             
