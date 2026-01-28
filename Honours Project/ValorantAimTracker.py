@@ -72,6 +72,8 @@ def detect_enemies_in_video(video_path, max_detected_frames_to_display=10, num_w
             try:
                 frame_data = frame_queue.get(timeout=1)
                 if frame_data is None:  # Sentinel value to stop worker
+                    # mark sentinel as processed so frame_queue.join() can complete
+                    frame_queue.task_done()
                     break
                 
                 frame_number, frame = frame_data
@@ -349,8 +351,8 @@ print("Running single-threaded detection...\n")
 single_elapsed = detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_display=5)
 
 # print("Running multithreaded detection...\n")
-# # Run multithreaded version and capture time
-# multi_elapsed = detect_enemies_in_video(video_path, max_detected_frames_to_display=5, num_workers=4)
-multi_elapsed = 0.0  # Placeholder since multithreaded call is commented out
+# Run multithreaded version and capture time
+multi_elapsed = detect_enemies_in_video(video_path, max_detected_frames_to_display=5, num_workers=4)
+# multi_elapsed = 0.0  # Placeholder since multithreaded call is commented out
 # Display both times together
 display_times(single_elapsed, multi_elapsed)
