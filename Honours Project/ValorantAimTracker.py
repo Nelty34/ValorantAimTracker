@@ -1,0 +1,142 @@
+from ultralyticsplus import YOLO, render_result
+import torch
+import ultralytics.nn.tasks
+import ultralytics.nn.modules
+import cv2
+import os
+from IPython.display import display
+import matplotlib.pyplot as plt
+import numpy as np
+from PIL import Image
+
+# Monkeypatch torch.load so that, when weights_only is not provided,
+# it defaults to False (changes behavior at runtime only; does not modify torch library files).
+_original_torch_load = torch.load
+def _load_with_weights_only_default_false(*args, **kwargs):
+    if 'weights_only' not in kwargs:
+        kwargs['weights_only'] = False
+    return _original_torch_load(*args, **kwargs)
+torch.load = _load_with_weights_only_default_false
+
+# load model
+model = YOLO('keremberke/yolov8m-valorant-detection')
+
+# set model parameters
+model.overrides['conf'] = 0.7  # NMS confidence threshold (updated to 0.7)
+model.overrides['iou'] = 0.45  # NMS IoU threshold
+model.overrides['agnostic_nms'] = False  # NMS class-agnostic
+model.overrides['max_det'] = 1000  # maximum number of detections per image
+
+
+def detect_enemies_in_video(video_path, max_detected_frames_to_display=10):
+    """
+    Process video frame by frame to detect enemies.
+    
+    Args:
+        video_path (str): Path to the video file
+        max_detected_frames_to_display (int): Maximum number of detected frames to display
+    """
+    
+    # Open the video
+    cap = cv2.VideoCapture(video_path)
+    
+    if not cap.isOpened():
+        print(f"Error: Could not open video file at {video_path}")
+        return
+    
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    frame_count = 0
+    frame_skip = 5  # Process every 5th frame
+    detected_frames = []  # Store information about frames with detections
+    
+    print(f"Video loaded: {total_frames} total frames at {fps} FPS")
+    print(f"Processing every {frame_skip}th frame for enemies...\n")
+    
+    while True:
+        ret, frame = cap.read()
+        
+        if not ret:
+            break
+        
+        # Only process every 5th frame
+        if frame_count % frame_skip == 0:
+            # Perform inference on this frame
+            results = model.predict(frame)
+            
+            # Filter results for enemies only
+            enemy_detections = []
+            for result in results:
+                for box in result.boxes:
+                    # Get class name - adjust 'enemy' if your model uses different class names
+                    class_id = int(box.cls[0])
+                    class_name = model.names[class_id]
+                    
+                    # Filter for enemy class
+                    if 'enemy' in class_name.lower():
+                        enemy_detections.append({
+                            'frame': frame_count,
+                            'class': class_name,
+                            'confidence': float(box.conf[0]),
+                            'box': box.xyxy[0].cpu().numpy()
+                        })
+            
+            # Print detections for this frame if enemies found
+            if enemy_detections:
+                print(f"Frame {frame_count}: Found {len(enemy_detections)} enemy/enemies")
+                for detection in enemy_detections:
+                    print(f"  - {detection['class']}: {detection['confidence']:.2f} confidence")
+                
+                # Store frame info for later display
+                detected_frames.append({
+                    'frame_number': frame_count,
+                    'frame_image': frame.copy(),
+                    'detections': enemy_detections,
+                    'results': results[0]
+                })
+            
+            # Optional: Render and show the frame with detections
+            # render = render_result(model=model, image=frame, result=results[0])
+            # render.show()
+        
+        frame_count += 1
+        
+        # Optional: Print progress every 100 frames
+        if frame_count % 100 == 0:
+            print(f"Processed frame {frame_count}/{total_frames}")
+    
+    cap.release()
+    print(f"\nDone! Processed {frame_count} frames total, checked {frame_count // frame_skip} frames.")
+    print(f"Total detected frames with enemies: {len(detected_frames)}\n")
+    
+    # Display the requested number of detected frames
+    if detected_frames:
+        frames_to_show = min(max_detected_frames_to_display, len(detected_frames))
+        print(f"Displaying {frames_to_show} detected frames:")
+        for i, detection_info in enumerate(detected_frames[:frames_to_show]):
+            print(f"\n--- Detection {i+1}/{frames_to_show} ---")
+            print(f"Frame: {detection_info['frame_number']}")
+            for detection in detection_info['detections']:
+                print(f"  {detection['class']}: {detection['confidence']:.2f} confidence")
+            
+            # Render and display the frame with annotations in the notebook output
+            render = render_result(model=model, image=detection_info['frame_image'], result=detection_info['results'])
+            
+            # Convert render result to numpy array if it's a PIL Image
+            if isinstance(render, Image.Image):
+                render_array = np.array(render)
+            else:
+                # If it's already a numpy array, convert from BGR to RGB
+                render_array = cv2.cvtColor(render, cv2.COLOR_BGR2RGB)
+            
+            # Display in notebook output
+            plt.figure(figsize=(10, 6))
+            plt.imshow(render_array)
+            plt.axis('off')
+            plt.tight_layout()
+            plt.show()
+
+#Run the detection on a video file
+import os
+video_path = os.path.join(os.path.dirname(__file__), 'testVid.mp4')
+detect_enemies_in_video(video_path, max_detected_frames_to_display=5)
