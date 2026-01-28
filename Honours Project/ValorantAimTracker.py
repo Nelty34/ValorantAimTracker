@@ -109,32 +109,37 @@ def detect_enemies_in_video(video_path, max_detected_frames_to_display=10):
     print(f"\nDone! Processed {frame_count} frames total, checked {frame_count // frame_skip} frames.")
     print(f"Total detected frames with enemies: {len(detected_frames)}\n")
     
-    # Display the requested number of detected frames
+    # Save detected frames to detections folder
     if detected_frames:
-        frames_to_show = min(max_detected_frames_to_display, len(detected_frames))
-        print(f"Displaying {frames_to_show} detected frames:")
-        for i, detection_info in enumerate(detected_frames[:frames_to_show]):
-            print(f"\n--- Detection {i+1}/{frames_to_show} ---")
+        # Create detections folder if it doesn't exist
+        detections_folder = os.path.join(os.path.dirname(video_path), 'detections')
+        os.makedirs(detections_folder, exist_ok=True)
+        
+        frames_to_save = min(max_detected_frames_to_display, len(detected_frames))
+        print(f"Saving {frames_to_save} detected frames to '{detections_folder}':")
+        
+        for i, detection_info in enumerate(detected_frames[:frames_to_save]):
+            print(f"\n--- Detection {i+1}/{frames_to_save} ---")
             print(f"Frame: {detection_info['frame_number']}")
             for detection in detection_info['detections']:
                 print(f"  {detection['class']}: {detection['confidence']:.2f} confidence")
             
-            # Render and display the frame with annotations in the notebook output
+            # Render the frame with annotations
             render = render_result(model=model, image=detection_info['frame_image'], result=detection_info['results'])
             
             # Convert render result to numpy array if it's a PIL Image
             if isinstance(render, Image.Image):
                 render_array = np.array(render)
+                # Convert RGB to BGR for cv2.imwrite
+                render_array = cv2.cvtColor(render_array, cv2.COLOR_RGB2BGR)
             else:
-                # If it's already a numpy array, convert from BGR to RGB
-                render_array = cv2.cvtColor(render, cv2.COLOR_BGR2RGB)
+                # Already in BGR format
+                render_array = render
             
-            # Display in notebook output
-            plt.figure(figsize=(10, 6))
-            plt.imshow(render_array)
-            plt.axis('off')
-            plt.tight_layout()
-            plt.show()
+            # Save the frame
+            output_path = os.path.join(detections_folder, f"detection_{i+1}_frame_{detection_info['frame_number']}.jpg")
+            cv2.imwrite(output_path, render_array)
+            print(f"  Saved to: {output_path}")
 
 #Run the detection on a video file
 import os
