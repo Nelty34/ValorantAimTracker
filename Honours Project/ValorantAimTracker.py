@@ -29,7 +29,7 @@ if not hasattr(torch.load, '_is_patched'):
 model = YOLO('keremberke/yolov8m-valorant-detection')
 
 # set model parameters
-model.overrides['conf'] = 0.7  # NMS confidence threshold (updated to 0.7)
+model.overrides['conf'] = 0.8  # NMS confidence threshold
 model.overrides['iou'] = 0.45  # NMS IoU threshold
 model.overrides['agnostic_nms'] = False  # NMS class-agnostic
 model.overrides['max_det'] = 1000  # maximum number of detections per image
