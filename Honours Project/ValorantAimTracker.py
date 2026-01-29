@@ -88,7 +88,7 @@ def detect_enemies_in_video(video_path, max_detected_frames_to_display=10, num_w
     
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS)
-    frame_skip = 12  # Process every 12th frame
+    frame_skip = 5  # Process every 5th frame
     
     print(f"Video loaded: {total_frames} total frames at {fps} FPS")
     print(f"Processing every {frame_skip}th frame for enemies...")
@@ -191,7 +191,7 @@ def detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_d
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS)
     frame_count = 0
-    frame_skip = 12  # Process every 12th frame
+    frame_skip = 5  # Process every 5th frame
     detected_frames = []  # Store information about frames with detections
     
     print(f"Video loaded: {total_frames} total frames at {fps} FPS")
@@ -300,7 +300,7 @@ def display_times(single_thread_time, multi_thread_time):
 
 # Run the detection on a video file
 import os
-video_path = os.path.join(os.path.dirname(__file__), 'testVid.mp4')
+video_path = os.path.join(os.path.dirname(__file__), 'testVod.mp4')
 
 if __name__ == '__main__':
     # Check number of CPU cores
@@ -313,5 +313,5 @@ if __name__ == '__main__':
         print(f"\nTotal Time: {elapsed:.2f} seconds")
     else:
         print(f"Running multiprocessing detection (system has {num_cores} cores)...\n")
-        elapsed = detect_enemies_in_video(video_path, max_detected_frames_to_display=5, num_workers=4)
+        elapsed = detect_enemies_in_video(video_path, max_detected_frames_to_display=15, num_workers=4)
         print(f"\nTotal Time: {elapsed:.2f} seconds")
