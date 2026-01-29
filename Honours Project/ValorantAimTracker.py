@@ -88,7 +88,7 @@ def detect_enemies_in_video(video_path, max_detected_frames_to_display=10, num_w
     
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS)
-    frame_skip = 5  # Process every 5th frame
+    frame_skip = 12  # Process every 12th frame
     
     print(f"Video loaded: {total_frames} total frames at {fps} FPS")
     print(f"Processing every {frame_skip}th frame for enemies...")
@@ -191,7 +191,7 @@ def detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_d
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS)
     frame_count = 0
-    frame_skip = 5  # Process every 5th frame
+    frame_skip = 12  # Process every 12th frame
     detected_frames = []  # Store information about frames with detections
     
     print(f"Video loaded: {total_frames} total frames at {fps} FPS")
