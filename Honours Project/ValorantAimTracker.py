@@ -284,7 +284,6 @@ def detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_d
     elapsed_time = time.time() - start_time
     return elapsed_time
 
-
 def display_times(single_thread_time, multi_thread_time):
     """Display both execution times and state which approach was faster."""
     print('\n' + '='*60)
@@ -304,13 +303,15 @@ import os
 video_path = os.path.join(os.path.dirname(__file__), 'testVid.mp4')
 
 if __name__ == '__main__':
-    # Run single-threaded version and capture time
-    print("Running single-threaded detection...\n")
-    single_elapsed = detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_display=5)
-
-    # Run multiprocessing version and capture time
-    print("Running multiprocessing detection...\n")
-    multi_elapsed = detect_enemies_in_video(video_path, max_detected_frames_to_display=5, num_workers=4)
+    # Check number of CPU cores
+    num_cores = mp.cpu_count()
+    print(f"System has {num_cores} CPU cores\n")
     
-    # Display both times together
-    display_times(single_elapsed, multi_elapsed)
+    if num_cores < 4:
+        print("Running single-threaded detection (system has fewer than 4 cores)...\n")
+        elapsed = detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_display=5)
+        print(f"\nTotal Time: {elapsed:.2f} seconds")
+    else:
+        print(f"Running multiprocessing detection (system has {num_cores} cores)...\n")
+        elapsed = detect_enemies_in_video(video_path, max_detected_frames_to_display=5, num_workers=4)
+        print(f"\nTotal Time: {elapsed:.2f} seconds")
