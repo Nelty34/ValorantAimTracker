@@ -140,6 +140,10 @@ def detect_enemies_in_video(video_path, max_detected_frames_to_display=10, num_w
     
     print(f"\nDone! Total detected frames with enemies: {len(detected_frames)}\n")
     
+    # Calculate crosshair position for all detected frames
+    if detected_frames:
+        detected_frames = calculate_crosshair_position(detected_frames)
+    
     # Save detected frames to detections folder
     if detected_frames:
         detections_folder = os.path.join(os.path.dirname(video_path), 'detections')
@@ -151,6 +155,7 @@ def detect_enemies_in_video(video_path, max_detected_frames_to_display=10, num_w
         for i, detection_info in enumerate(detected_frames[:frames_to_save]):
             print(f"\n--- Detection {i+1}/{frames_to_save} ---")
             print(f"Frame: {detection_info['frame_number']}")
+            print(f"Crosshair Position: {detection_info['crosshair_position']}")
             for detection in detection_info['detections']:
                 print(f"  {detection['class']}: {detection['confidence']:.2f} confidence")
             
@@ -249,6 +254,10 @@ def detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_d
     print(f"\nDone! Processed {frame_count} frames total, checked {frame_count // frame_skip} frames.")
     print(f"Total detected frames with enemies: {len(detected_frames)}\n")
     
+    # Calculate crosshair position for all detected frames
+    if detected_frames:
+        detected_frames = calculate_crosshair_position(detected_frames)
+    
     # Save detected frames to detections folder
     if detected_frames:
         # Create detections folder if it doesn't exist
@@ -261,6 +270,7 @@ def detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_d
         for i, detection_info in enumerate(detected_frames[:frames_to_save]):
             print(f"\n--- Detection {i+1}/{frames_to_save} ---")
             print(f"Frame: {detection_info['frame_number']}")
+            print(f"Crosshair Position: {detection_info['crosshair_position']}")
             for detection in detection_info['detections']:
                 print(f"  {detection['class']}: {detection['confidence']:.2f} confidence")
             
