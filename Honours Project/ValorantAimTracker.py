@@ -284,6 +284,40 @@ def detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_d
     elapsed_time = time.time() - start_time
     return elapsed_time
 
+def calculate_crosshair_position(frame_or_frames):
+    """
+    Calculate the centre pixel position (crosshair) for detected frames.
+    
+    Args:
+        frame_or_frames: Either a single frame (numpy array) or a list of detection dictionaries
+    
+    Returns:
+        If input is a single frame: tuple (x, y) representing centre coordinates
+        If input is a list of detections: list of detection dictionaries with added 'crosshair_position' key
+    """
+    
+    # Case 1: Single frame (numpy array)
+    if isinstance(frame_or_frames, np.ndarray):
+        height, width = frame_or_frames.shape[:2]
+        crosshair_x = width // 2
+        crosshair_y = height // 2
+        return (crosshair_x, crosshair_y)
+    
+    # Case 2: List of detection dictionaries
+    elif isinstance(frame_or_frames, list):
+        for detection_info in frame_or_frames:
+            frame = detection_info['frame_image']
+            height, width = frame.shape[:2]
+            crosshair_x = width // 2
+            crosshair_y = height // 2
+            detection_info['crosshair_position'] = (crosshair_x, crosshair_y)
+        
+        return frame_or_frames
+    
+    else:
+        raise TypeError("Input must be a numpy array (single frame) or list of detection dictionaries")
+
+
 def display_times(single_thread_time, multi_thread_time):
     """Display both execution times and state which approach was faster."""
     print('\n' + '='*60)
