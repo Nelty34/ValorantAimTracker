@@ -144,6 +144,10 @@ def detect_enemies_in_video(video_path, max_detected_frames_to_display=10, num_w
     if detected_frames:
         detected_frames = calculate_crosshair_position(detected_frames)
     
+    # Calculate distance from crosshair to top of detection boxes
+    if detected_frames:
+        detected_frames = calculate_distance_to_box_top(detected_frames)
+    
     # Save detected frames to detections folder
     if detected_frames:
         detections_folder = os.path.join(os.path.dirname(video_path), 'detections')
@@ -157,7 +161,7 @@ def detect_enemies_in_video(video_path, max_detected_frames_to_display=10, num_w
             print(f"Frame: {detection_info['frame_number']}")
             print(f"Crosshair Position: {detection_info['crosshair_position']}")
             for detection in detection_info['detections']:
-                print(f"  {detection['class']}: {detection['confidence']:.2f} confidence")
+                print(f"  {detection['class']}: {detection['confidence']:.2f} confidence - Distance to box top: {detection['distance_to_box_top']:.2f} pixels")
             
             render = render_result(model=model, image=detection_info['frame_image'], result=detection_info['results'])
             
@@ -258,6 +262,10 @@ def detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_d
     if detected_frames:
         detected_frames = calculate_crosshair_position(detected_frames)
     
+    # Calculate distance from crosshair to top of detection boxes
+    if detected_frames:
+        detected_frames = calculate_distance_to_box_top(detected_frames)
+    
     # Save detected frames to detections folder
     if detected_frames:
         # Create detections folder if it doesn't exist
@@ -272,7 +280,7 @@ def detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_d
             print(f"Frame: {detection_info['frame_number']}")
             print(f"Crosshair Position: {detection_info['crosshair_position']}")
             for detection in detection_info['detections']:
-                print(f"  {detection['class']}: {detection['confidence']:.2f} confidence")
+                print(f"  {detection['class']}: {detection['confidence']:.2f} confidence - Distance to box top: {detection['distance_to_box_top']:.2f} pixels")
             
             # Render the frame with annotations
             render = render_result(model=model, image=detection_info['frame_image'], result=detection_info['results'])
@@ -326,6 +334,37 @@ def calculate_crosshair_position(frame_or_frames):
     
     else:
         raise TypeError("Input must be a numpy array (single frame) or list of detection dictionaries")
+
+
+def calculate_distance_to_box_top(detected_frames):
+    """
+    Calculate the distance from crosshair to the top of each enemy detection box.
+    
+    Args:
+        detected_frames: List of detection dictionaries with crosshair_position and detections
+    
+    Returns:
+        List of detection dictionaries with added 'distance_to_box_top' for each detection
+    """
+    
+    for detection_info in detected_frames:
+        crosshair_x, crosshair_y = detection_info['crosshair_position']
+        
+        # Calculate distance for each detection in this frame
+        for detection in detection_info['detections']:
+            box = detection['box']  # [x1, y1, x2, y2]
+            
+            # Top of the box
+            box_x1, box_y1, box_x2, box_y2 = box
+            box_top_center_x = (box_x1 + box_x2) / 2
+            box_top_center_y = box_y1
+            
+            # Calculate Euclidean distance from crosshair to top center of box
+            distance = np.sqrt((crosshair_x - box_top_center_x)**2 + (crosshair_y - box_top_center_y)**2)
+            
+            detection['distance_to_box_top'] = distance
+    
+    return detected_frames
 
 
 def display_times(single_thread_time, multi_thread_time):
