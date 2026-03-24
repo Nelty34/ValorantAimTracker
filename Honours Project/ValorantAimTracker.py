@@ -34,12 +34,15 @@ model.overrides['iou'] = 0.45  # NMS IoU threshold
 model.overrides['agnostic_nms'] = False  # NMS class-agnostic
 model.overrides['max_det'] = 1000  # maximum number of detections per image
 
+# Find enemy class indices
+ENEMY_CLASS_INDICES = [idx for idx, name in model.names.items() if 'enemy' in name.lower()]
+
 
 def _process_frame(args):
     """Worker function for multiprocessing pool that detects enemies in a frame."""
     frame_number, frame = args
     try:
-        results = model.predict(frame)
+        results = model.predict(frame, classes=ENEMY_CLASS_INDICES)
         enemy_detections = []
         for result in results:
             for box in result.boxes:
@@ -140,6 +143,18 @@ def detect_enemies_in_video(video_path, max_detected_frames_to_display=10, num_w
     
     print(f"\nDone! Total detected frames with enemies: {len(detected_frames)}\n")
     
+    # Calculate crosshair position for all detected frames
+    if detected_frames:
+        detected_frames = calculate_crosshair_position(detected_frames)
+    
+    # Calculate distance from crosshair to top of detection boxes
+    if detected_frames:
+        detected_frames = calculate_distance_to_box_top(detected_frames)
+    
+    # Calculate engagement duration (frames from distance > 80 to < 40 pixels)
+    if detected_frames:
+        detected_frames = calculate_engagement_duration(detected_frames)
+    
     # Save detected frames to detections folder
     if detected_frames:
         detections_folder = os.path.join(os.path.dirname(video_path), 'detections')
@@ -151,8 +166,12 @@ def detect_enemies_in_video(video_path, max_detected_frames_to_display=10, num_w
         for i, detection_info in enumerate(detected_frames[:frames_to_save]):
             print(f"\n--- Detection {i+1}/{frames_to_save} ---")
             print(f"Frame: {detection_info['frame_number']}")
+            print(f"Crosshair Position: {detection_info['crosshair_position']}")
             for detection in detection_info['detections']:
-                print(f"  {detection['class']}: {detection['confidence']:.2f} confidence")
+                engagement_info = f" | Engagement frames: {detection['engagement_frame_count']}"
+                if detection.get('engagement_completed'):
+                    engagement_info += f" (COMPLETED in {detection['total_engagement_frames']} frames)"
+                print(f"  {detection['class']}: {detection['confidence']:.2f} confidence - Distance to box top: {detection['distance_to_box_top']:.2f} pixels{engagement_info}")
             
             render = render_result(model=model, image=detection_info['frame_image'], result=detection_info['results'])
             
@@ -205,8 +224,8 @@ def detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_d
         
         # Only process every 5th frame
         if frame_count % frame_skip == 0:
-            # Perform inference on this frame
-            results = model.predict(frame)
+            # Perform inference on this frame (only looking for enemies)
+            results = model.predict(frame, classes=ENEMY_CLASS_INDICES)
             
             # Filter results for enemies only
             enemy_detections = []
@@ -249,6 +268,18 @@ def detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_d
     print(f"\nDone! Processed {frame_count} frames total, checked {frame_count // frame_skip} frames.")
     print(f"Total detected frames with enemies: {len(detected_frames)}\n")
     
+    # Calculate crosshair position for all detected frames
+    if detected_frames:
+        detected_frames = calculate_crosshair_position(detected_frames)
+    
+    # Calculate distance from crosshair to top of detection boxes
+    if detected_frames:
+        detected_frames = calculate_distance_to_box_top(detected_frames)
+    
+    # Calculate engagement duration (frames from distance > 80 to < 40 pixels)
+    if detected_frames:
+        detected_frames = calculate_engagement_duration(detected_frames)
+    
     # Save detected frames to detections folder
     if detected_frames:
         # Create detections folder if it doesn't exist
@@ -261,8 +292,12 @@ def detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_d
         for i, detection_info in enumerate(detected_frames[:frames_to_save]):
             print(f"\n--- Detection {i+1}/{frames_to_save} ---")
             print(f"Frame: {detection_info['frame_number']}")
+            print(f"Crosshair Position: {detection_info['crosshair_position']}")
             for detection in detection_info['detections']:
-                print(f"  {detection['class']}: {detection['confidence']:.2f} confidence")
+                engagement_info = f" | Engagement frames: {detection['engagement_frame_count']}"
+                if detection.get('engagement_completed'):
+                    engagement_info += f" (COMPLETED in {detection['total_engagement_frames']} frames)"
+                print(f"  {detection['class']}: {detection['confidence']:.2f} confidence - Distance to box top: {detection['distance_to_box_top']:.2f} pixels{engagement_info}")
             
             # Render the frame with annotations
             render = render_result(model=model, image=detection_info['frame_image'], result=detection_info['results'])
@@ -283,6 +318,138 @@ def detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_d
     
     elapsed_time = time.time() - start_time
     return elapsed_time
+
+def calculate_crosshair_position(frame_or_frames):
+    """
+    Calculate the centre pixel position (crosshair) for detected frames.
+    
+    Args:
+        frame_or_frames: Either a single frame (numpy array) or a list of detection dictionaries
+    
+    Returns:
+        If input is a single frame: tuple (x, y) representing centre coordinates
+        If input is a list of detections: list of detection dictionaries with added 'crosshair_position' key
+    """
+    
+    # Case 1: Single frame (numpy array)
+    if isinstance(frame_or_frames, np.ndarray):
+        height, width = frame_or_frames.shape[:2]
+        crosshair_x = width // 2
+        crosshair_y = height // 2
+        return (crosshair_x, crosshair_y)
+    
+    # Case 2: List of detection dictionaries
+    elif isinstance(frame_or_frames, list):
+        for detection_info in frame_or_frames:
+            frame = detection_info['frame_image']
+            height, width = frame.shape[:2]
+            crosshair_x = width // 2
+            crosshair_y = height // 2
+            detection_info['crosshair_position'] = (crosshair_x, crosshair_y)
+        
+        return frame_or_frames
+    
+    else:
+        raise TypeError("Input must be a numpy array (single frame) or list of detection dictionaries")
+
+
+def calculate_distance_to_box_top(detected_frames):
+    """
+    Calculate the distance from crosshair to the top of each enemy detection box.
+    
+    Args:
+        detected_frames: List of detection dictionaries with crosshair_position and detections
+    
+    Returns:
+        List of detection dictionaries with added 'distance_to_box_top' for each detection
+    """
+    
+    for detection_info in detected_frames:
+        crosshair_x, crosshair_y = detection_info['crosshair_position']
+        
+        # Calculate distance for each detection in this frame
+        for detection in detection_info['detections']:
+            box = detection['box']  # [x1, y1, x2, y2]
+            
+            # Top of the box
+            box_x1, box_y1, box_x2, box_y2 = box
+            box_top_center_x = (box_x1 + box_x2) / 2
+            box_top_center_y = box_y1
+            
+            # Calculate Euclidean distance from crosshair to top center of box
+            distance = np.sqrt((crosshair_x - box_top_center_x)**2 + (crosshair_y - box_top_center_y)**2)
+            
+            detection['distance_to_box_top'] = distance
+    
+    return detected_frames
+
+
+def calculate_engagement_duration(detected_frames):
+    """
+    Calculate engagement duration: frames from when distance > 80 pixels until distance < 40 pixels.
+    
+    Args:
+        detected_frames: List of detection dictionaries with distance_to_box_top for each detection
+    
+    Returns:
+        List of detection dictionaries with added 'engagement_frame_count' for each detection
+    """
+    
+    # Track engagement sessions: {detection_id: {'started': bool, 'frame_count': int, 'start_frame': int}}
+    engagement_sessions = {}
+    session_counter = 0
+    
+    for frame_idx, detection_info in enumerate(detected_frames):
+        frame_number = detection_info['frame_number']
+        
+        for det_idx, detection in enumerate(detection_info['detections']):
+            distance = detection['distance_to_box_top']
+            
+            # Create unique key for this detection across frames
+            detection_key = f"{frame_idx}_{det_idx}"
+            
+            # Initialize engagement session if not exists
+            if detection_key not in engagement_sessions:
+                engagement_sessions[detection_key] = {
+                    'started': False,
+                    'frame_count': 0,
+                    'start_frame': None,
+                    'engagement_id': None
+                }
+            
+            session = engagement_sessions[detection_key]
+            
+            # Start engagement if distance > 80 and not already started
+            if distance > 80 and not session['started']:
+                session['started'] = True
+                session['frame_count'] = 1
+                session['start_frame'] = frame_number
+                session['engagement_id'] = session_counter
+                session_counter += 1
+                detection['engagement_frame_count'] = 1
+                detection['engagement_started'] = True
+            
+            # Continue counting if engagement is active
+            elif session['started']:
+                session['frame_count'] += 1
+                detection['engagement_frame_count'] = session['frame_count']
+                detection['engagement_started'] = True
+                
+                # End engagement if distance drops below 40
+                if distance < 40:
+                    detection['engagement_completed'] = True
+                    detection['total_engagement_frames'] = session['frame_count']
+                    session['started'] = False
+                else:
+                    detection['engagement_completed'] = False
+            
+            else:
+                detection['engagement_frame_count'] = 0
+                detection['engagement_started'] = False
+                detection['engagement_completed'] = False
+    
+    return detected_frames
+
 
 def display_times(single_thread_time, multi_thread_time):
     """Display both execution times and state which approach was faster."""
