@@ -14,6 +14,14 @@ import time
 import multiprocessing as mp
 from multiprocessing import Pool
 
+try:
+    import pytesseract
+    TESSERACT_AVAILABLE = True
+except ImportError:
+    TESSERACT_AVAILABLE = False
+    print("Warning: pytesseract not available. Install with: pip install pytesseract")
+    print("Also requires Tesseract OCR: https://github.com/UB-Mannheim/tesseract/wiki")
+
 # Monkeypatch torch.load so that, when weights_only is not provided,
 # it defaults to False (changes behavior at runtime only; does not modify torch library files).
 if not hasattr(torch.load, '_is_patched'):
@@ -155,6 +163,10 @@ def detect_enemies_in_video(video_path, max_detected_frames_to_display=10, num_w
     if detected_frames:
         detected_frames = calculate_engagement_duration(detected_frames)
     
+    # Calculate reaction time per engagement
+    if detected_frames:
+        calculate_reaction_time(detected_frames, fps, frame_skip)
+    
     # Save detected frames to detections folder
     if detected_frames:
         detections_folder = os.path.join(os.path.dirname(video_path), 'detections')
@@ -279,6 +291,10 @@ def detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_d
     # Calculate engagement duration (frames from distance > 80 to < 40 pixels)
     if detected_frames:
         detected_frames = calculate_engagement_duration(detected_frames)
+    
+    # Calculate reaction time per engagement
+    if detected_frames:
+        calculate_reaction_time(detected_frames, fps, frame_skip)
     
     # Save detected frames to detections folder
     if detected_frames:
@@ -451,6 +467,126 @@ def calculate_engagement_duration(detected_frames):
     return detected_frames
 
 
+def extract_ammo_count(frame, ammo_region=(0.80, 0.82, 1.0, 1.0)):
+    """
+    Extract ammo count from frame using OCR on the HUD region.
+    Default region is tuned for Valorant's ammo counter (bottom-right corner).
+    
+    Args:
+        frame: Input video frame (numpy array)
+        ammo_region: Tuple (x1, y1, x2, y2) as fractions of image dimensions where ammo is located
+                    Default (0.80, 0.82, 1.0, 1.0) targets Valorant's ammo counter
+    
+    Returns:
+        Integer ammo count, or None if extraction fails
+    """
+    if not TESSERACT_AVAILABLE:
+        return None
+    
+    try:
+        height, width = frame.shape[:2]
+        x1, y1, x2, y2 = ammo_region
+        x1, y1, x2, y2 = int(x1 * width), int(y1 * height), int(x2 * width), int(y2 * height)
+        
+        # Crop the ammo region
+        ammo_crop = frame[y1:y2, x1:x2]
+        
+        # Convert to grayscale and apply threshold for better OCR
+        gray = cv2.cvtColor(ammo_crop, cv2.COLOR_BGR2GRAY)
+        _, binary = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+        
+        # Extract text using tesseract
+        text = pytesseract.image_to_string(binary, config='--psm 6')
+        
+        # Extract first number found in text
+        numbers = ''.join(filter(str.isdigit, text))
+        if numbers:
+            return int(numbers)
+    except Exception as e:
+        pass
+    
+    return None
+
+
+def calculate_reaction_time(detected_frames, fps, frame_skip, ammo_region=(0.8, 0.82, 1.0, 1.0)):
+    """
+    Calculate the reaction time per engagement from when an enemy first appears to when a shot is fired.
+    An engagement is defined as consecutive detected frames (frames differing by exactly frame_skip) until a gap where no detections occur.
+    A shot is detected by a change in ammo count via OCR.
+    
+    Args:
+        detected_frames: List of detection dictionaries with frame_number and detections
+        fps: Frames per second of the video
+        frame_skip: Number of frames skipped between processed frames
+        ammo_region: Tuple (x1, y1, x2, y2) as fractions of image dimensions where ammo counter is located
+    
+    Returns:
+        None - prints reaction times for each engagement
+    """
+    if not detected_frames:
+        print("No enemy detections found.")
+        return
+    
+    if not TESSERACT_AVAILABLE:
+        print("\nWarning: pytesseract/Tesseract OCR not available. Cannot detect shots via ammo count.")
+        print("Install: pip install pytesseract")
+        print("AND: https://github.com/UB-Mannheim/tesseract/wiki")
+        return
+    
+    # Sort detected frames by frame number to ensure chronological order
+    detected_frames.sort(key=lambda x: x['frame_number'])
+    
+    # Extract ammo counts for all frames
+    ammo_counts = {}
+    print("Extracting ammo count from frames...")
+    for detection_info in detected_frames:
+        ammo = extract_ammo_count(detection_info['frame_image'], ammo_region)
+        ammo_counts[detection_info['frame_number']] = ammo
+    
+    # Group into engagements: consecutive frames where frame numbers differ by exactly frame_skip
+    engagements = []
+    current_engagement = []
+    
+    for i, frame in enumerate(detected_frames):
+        if i == 0 or frame['frame_number'] - detected_frames[i-1]['frame_number'] > frame_skip:
+            if current_engagement:
+                engagements.append(current_engagement)
+            current_engagement = [frame]
+        else:
+            current_engagement.append(frame)
+    
+    if current_engagement:
+        engagements.append(current_engagement)
+    
+    print(f"\nReaction times per engagement ({len(engagements)} engagements found):")
+    print("(Shot detected when ammo count decreases)\n")
+    
+    for idx, engagement in enumerate(engagements, 1):
+        first_detection_frame = engagement[0]['frame_number']
+        first_ammo = ammo_counts.get(first_detection_frame)
+        
+        if first_ammo is None:
+            print(f"  Engagement {idx} (starting frame {first_detection_frame}): Could not extract ammo count")
+            continue
+        
+        # Find the first frame where ammo count decreases (shot fired)
+        shot_frame = None
+        for detection_info in engagement:
+            frame_num = detection_info['frame_number']
+            current_ammo = ammo_counts.get(frame_num)
+            
+            if current_ammo is not None and current_ammo < first_ammo:
+                shot_frame = frame_num
+                break
+        
+        if shot_frame is None:
+            print(f"  Engagement {idx} (starting frame {first_detection_frame}): No shot fired (ammo count did not decrease)")
+        else:
+            reaction_frames = shot_frame - first_detection_frame
+            reaction_time_seconds = reaction_frames * (frame_skip / fps)
+            print(f"  Engagement {idx} (starting frame {first_detection_frame}): {reaction_time_seconds:.2f} seconds")
+
+
 def display_times(single_thread_time, multi_thread_time):
     """Display both execution times and state which approach was faster."""
     print('\n' + '='*60)
@@ -467,7 +603,7 @@ def display_times(single_thread_time, multi_thread_time):
 
 # Run the detection on a video file
 import os
-video_path = os.path.join(os.path.dirname(__file__), 'testVod.mp4')
+video_path = os.path.join(os.path.dirname(__file__), 'testVid2.mp4')
 
 if __name__ == '__main__':
     # Check number of CPU cores
