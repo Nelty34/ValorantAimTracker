@@ -4,6 +4,8 @@ import ultralytics.nn.tasks
 import ultralytics.nn.modules
 import cv2
 import os
+import subprocess
+import tempfile
 from IPython.display import display
 import matplotlib.pyplot as plt
 import numpy as np
@@ -155,17 +157,13 @@ def detect_enemies_in_video(video_path, max_detected_frames_to_display=10, num_w
     if detected_frames:
         detected_frames = calculate_crosshair_position(detected_frames)
     
-    # Calculate distance from crosshair to top of detection boxes
+    # Check crosshair placement relative to enemy head
     if detected_frames:
-        detected_frames = calculate_distance_to_box_top(detected_frames)
+        detected_frames = check_crosshair_placement(detected_frames)
     
-    # Calculate engagement duration (frames from distance > 80 to < 40 pixels)
+    # Measure reaction time from enemy appearance to shot
     if detected_frames:
-        detected_frames = calculate_engagement_duration(detected_frames)
-    
-    # Calculate reaction time per engagement
-    if detected_frames:
-        calculate_reaction_time(detected_frames, fps, frame_skip)
+        measure_reaction_time(detected_frames, fps, frame_skip, video_path=video_path)
     
     # Save detected frames to detections folder
     if detected_frames:
@@ -180,10 +178,9 @@ def detect_enemies_in_video(video_path, max_detected_frames_to_display=10, num_w
             print(f"Frame: {detection_info['frame_number']}")
             print(f"Crosshair Position: {detection_info['crosshair_position']}")
             for detection in detection_info['detections']:
-                engagement_info = f" | Engagement frames: {detection['engagement_frame_count']}"
-                if detection.get('engagement_completed'):
-                    engagement_info += f" (COMPLETED in {detection['total_engagement_frames']} frames)"
-                print(f"  {detection['class']}: {detection['confidence']:.2f} confidence - Distance to box top: {detection['distance_to_box_top']:.2f} pixels{engagement_info}")
+                print(f"  {detection['class']}: {detection['confidence']:.2f} confidence")
+                print(f"    Crosshair Placement: {detection['crosshair_placement']}")
+                print(f"    Vertical Offset: {detection['crosshair_y_diff']:.1f} pixels")
             
             render = render_result(model=model, image=detection_info['frame_image'], result=detection_info['results'])
             
@@ -284,17 +281,13 @@ def detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_d
     if detected_frames:
         detected_frames = calculate_crosshair_position(detected_frames)
     
-    # Calculate distance from crosshair to top of detection boxes
+    # Check crosshair placement relative to enemy head
     if detected_frames:
-        detected_frames = calculate_distance_to_box_top(detected_frames)
+        detected_frames = check_crosshair_placement(detected_frames)
     
-    # Calculate engagement duration (frames from distance > 80 to < 40 pixels)
+    # Measure reaction time from enemy appearance to shot
     if detected_frames:
-        detected_frames = calculate_engagement_duration(detected_frames)
-    
-    # Calculate reaction time per engagement
-    if detected_frames:
-        calculate_reaction_time(detected_frames, fps, frame_skip)
+        measure_reaction_time(detected_frames, fps, frame_skip, video_path=video_path)
     
     # Save detected frames to detections folder
     if detected_frames:
@@ -310,10 +303,9 @@ def detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_d
             print(f"Frame: {detection_info['frame_number']}")
             print(f"Crosshair Position: {detection_info['crosshair_position']}")
             for detection in detection_info['detections']:
-                engagement_info = f" | Engagement frames: {detection['engagement_frame_count']}"
-                if detection.get('engagement_completed'):
-                    engagement_info += f" (COMPLETED in {detection['total_engagement_frames']} frames)"
-                print(f"  {detection['class']}: {detection['confidence']:.2f} confidence - Distance to box top: {detection['distance_to_box_top']:.2f} pixels{engagement_info}")
+                print(f"  {detection['class']}: {detection['confidence']:.2f} confidence")
+                print(f"    Crosshair Placement: {detection['crosshair_placement']}")
+                print(f"    Vertical Offset: {detection['crosshair_y_diff']:.1f} pixels")
             
             # Render the frame with annotations
             render = render_result(model=model, image=detection_info['frame_image'], result=detection_info['results'])
@@ -369,150 +361,47 @@ def calculate_crosshair_position(frame_or_frames):
         raise TypeError("Input must be a numpy array (single frame) or list of detection dictionaries")
 
 
-def calculate_distance_to_box_top(detected_frames):
+def check_crosshair_placement(detected_frames, threshold=20):
     """
-    Calculate the distance from crosshair to the top of each enemy detection box.
+    Check if the crosshair is positioned higher than, lower than, or on level with enemy head.
     
     Args:
         detected_frames: List of detection dictionaries with crosshair_position and detections
+        threshold: Pixel threshold for "on level" classification (default 20 pixels)
     
     Returns:
-        List of detection dictionaries with added 'distance_to_box_top' for each detection
+        List of detection dictionaries with added 'crosshair_placement' key for each detection
     """
-    
     for detection_info in detected_frames:
         crosshair_x, crosshair_y = detection_info['crosshair_position']
         
-        # Calculate distance for each detection in this frame
         for detection in detection_info['detections']:
             box = detection['box']  # [x1, y1, x2, y2]
             
-            # Top of the box
-            box_x1, box_y1, box_x2, box_y2 = box
-            box_top_center_x = (box_x1 + box_x2) / 2
-            box_top_center_y = box_y1
+            # y1 is the top of the head (head level)
+            head_level_y = box[1]
             
-            # Calculate Euclidean distance from crosshair to top center of box
-            distance = np.sqrt((crosshair_x - box_top_center_x)**2 + (crosshair_y - box_top_center_y)**2)
+            # Determine placement relative to head
+            diff = crosshair_y - head_level_y
             
-            detection['distance_to_box_top'] = distance
-    
-    return detected_frames
-
-
-def calculate_engagement_duration(detected_frames):
-    """
-    Calculate engagement duration: frames from when distance > 80 pixels until distance < 40 pixels.
-    
-    Args:
-        detected_frames: List of detection dictionaries with distance_to_box_top for each detection
-    
-    Returns:
-        List of detection dictionaries with added 'engagement_frame_count' for each detection
-    """
-    
-    # Track engagement sessions: {detection_id: {'started': bool, 'frame_count': int, 'start_frame': int}}
-    engagement_sessions = {}
-    session_counter = 0
-    
-    for frame_idx, detection_info in enumerate(detected_frames):
-        frame_number = detection_info['frame_number']
-        
-        for det_idx, detection in enumerate(detection_info['detections']):
-            distance = detection['distance_to_box_top']
-            
-            # Create unique key for this detection across frames
-            detection_key = f"{frame_idx}_{det_idx}"
-            
-            # Initialize engagement session if not exists
-            if detection_key not in engagement_sessions:
-                engagement_sessions[detection_key] = {
-                    'started': False,
-                    'frame_count': 0,
-                    'start_frame': None,
-                    'engagement_id': None
-                }
-            
-            session = engagement_sessions[detection_key]
-            
-            # Start engagement if distance > 80 and not already started
-            if distance > 80 and not session['started']:
-                session['started'] = True
-                session['frame_count'] = 1
-                session['start_frame'] = frame_number
-                session['engagement_id'] = session_counter
-                session_counter += 1
-                detection['engagement_frame_count'] = 1
-                detection['engagement_started'] = True
-            
-            # Continue counting if engagement is active
-            elif session['started']:
-                session['frame_count'] += 1
-                detection['engagement_frame_count'] = session['frame_count']
-                detection['engagement_started'] = True
-                
-                # End engagement if distance drops below 40
-                if distance < 40:
-                    detection['engagement_completed'] = True
-                    detection['total_engagement_frames'] = session['frame_count']
-                    session['started'] = False
-                else:
-                    detection['engagement_completed'] = False
-            
+            if diff < -threshold:
+                placement = "HIGHER than head"
+            elif diff > threshold:
+                placement = "LOWER than head"
             else:
-                detection['engagement_frame_count'] = 0
-                detection['engagement_started'] = False
-                detection['engagement_completed'] = False
+                placement = "ON LEVEL with head"
+            
+            detection['crosshair_placement'] = placement
+            detection['head_level_y'] = head_level_y
+            detection['crosshair_y_diff'] = diff
     
     return detected_frames
 
 
-def extract_ammo_count(frame, ammo_region=(0.80, 0.82, 1.0, 1.0)):
+def measure_reaction_time(detected_frames, fps, frame_skip, ammo_region=(0.55, 0.88, 0.70, 0.99), video_path=None):
     """
-    Extract ammo count from frame using OCR on the HUD region.
-    Default region is tuned for Valorant's ammo counter (bottom-right corner).
-    
-    Args:
-        frame: Input video frame (numpy array)
-        ammo_region: Tuple (x1, y1, x2, y2) as fractions of image dimensions where ammo is located
-                    Default (0.80, 0.82, 1.0, 1.0) targets Valorant's ammo counter
-    
-    Returns:
-        Integer ammo count, or None if extraction fails
-    """
-    if not TESSERACT_AVAILABLE:
-        return None
-    
-    try:
-        height, width = frame.shape[:2]
-        x1, y1, x2, y2 = ammo_region
-        x1, y1, x2, y2 = int(x1 * width), int(y1 * height), int(x2 * width), int(y2 * height)
-        
-        # Crop the ammo region
-        ammo_crop = frame[y1:y2, x1:x2]
-        
-        # Convert to grayscale and apply threshold for better OCR
-        gray = cv2.cvtColor(ammo_crop, cv2.COLOR_BGR2GRAY)
-        _, binary = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
-        
-        # Extract text using tesseract
-        text = pytesseract.image_to_string(binary, config='--psm 6')
-        
-        # Extract first number found in text
-        numbers = ''.join(filter(str.isdigit, text))
-        if numbers:
-            return int(numbers)
-    except Exception as e:
-        pass
-    
-    return None
-
-
-def calculate_reaction_time(detected_frames, fps, frame_skip, ammo_region=(0.8, 0.82, 1.0, 1.0)):
-    """
-    Calculate the reaction time per engagement from when an enemy first appears to when a shot is fired.
-    An engagement is defined as consecutive detected frames (frames differing by exactly frame_skip) until a gap where no detections occur.
-    A shot is detected by a change in ammo count via OCR.
+    Measure reaction time from enemy appearance to first shot fired.
+    Each engagement continues until ammo count changes (shot fired).
     
     Args:
         detected_frames: List of detection dictionaries with frame_number and detections
@@ -521,89 +410,279 @@ def calculate_reaction_time(detected_frames, fps, frame_skip, ammo_region=(0.8, 
         ammo_region: Tuple (x1, y1, x2, y2) as fractions of image dimensions where ammo counter is located
     
     Returns:
-        None - prints reaction times for each engagement
+        None - prints reaction time for each engagement
     """
     if not detected_frames:
         print("No enemy detections found.")
         return
     
-    if not TESSERACT_AVAILABLE:
-        print("\nWarning: pytesseract/Tesseract OCR not available. Cannot detect shots via ammo count.")
-        print("Install: pip install pytesseract")
-        print("AND: https://github.com/UB-Mannheim/tesseract/wiki")
-        return
-    
     # Sort detected frames by frame number to ensure chronological order
-    detected_frames.sort(key=lambda x: x['frame_number'])
+    detected_frames_sorted = sorted(detected_frames, key=lambda x: x['frame_number'])
     
-    # Extract ammo counts for all frames
+    # Extract ammo counts for all frames first
     ammo_counts = {}
-    print("Extracting ammo count from frames...")
-    for detection_info in detected_frames:
+    print("\nExtracting ammo count from frames for reaction time analysis...")
+    successful_extractions = 0
+    failed_extractions = 0
+    
+    for detection_info in detected_frames_sorted:
         ammo = extract_ammo_count(detection_info['frame_image'], ammo_region)
         ammo_counts[detection_info['frame_number']] = ammo
+        if ammo is not None:
+            successful_extractions += 1
+        else:
+            failed_extractions += 1
     
-    # Group into engagements: consecutive frames where frame numbers differ by exactly frame_skip
+    print(f"Ammo extraction complete: {successful_extractions} successful, {failed_extractions} failed\n")
+    
+    # Extend ammo analysis beyond last detection to find final ammo change
+    if video_path and detected_frames_sorted:
+        last_detection_frame = detected_frames_sorted[-1]['frame_number']
+        print(f"Last detection at frame {last_detection_frame}, scanning forward for ammo changes...\n")
+        
+        cap = cv2.VideoCapture(video_path)
+        if cap.isOpened():
+            cap.set(cv2.CAP_PROP_POS_FRAMES, last_detection_frame)
+            frame_count = last_detection_frame
+            last_ammo = ammo_counts.get(last_detection_frame)
+            
+            # Scan up to 10 seconds ahead for ammo changes
+            scan_limit = last_detection_frame + int(10.0 * fps)
+            
+            while frame_count < scan_limit:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                
+                # Check every frame skip
+                if (frame_count - last_detection_frame) % frame_skip == 0:
+                    ammo = extract_ammo_count(frame, ammo_region)
+                    
+                    if ammo is not None and ammo not in ammo_counts.values() or (last_ammo is not None and ammo != last_ammo):
+                        ammo_counts[frame_count] = ammo
+                        last_ammo = ammo
+                
+                frame_count += 1
+            
+            cap.release()
+    
+    # Group frames into engagements based on ammo changes (with timeouts)
+    # Primary: ammo changes define engagement boundaries
+    # Fallback: 3-second timeout or frame gaps define boundaries when ammo can't be read
     engagements = []
     current_engagement = []
+    current_engagement_ammo = None
+    current_engagement_start_frame = None
+    frame_gap_threshold = frame_skip * 5
+    timeout_frames = int(3.0 * fps / frame_skip)  # 3 seconds worth of detection frames
     
-    for i, frame in enumerate(detected_frames):
-        if i == 0 or frame['frame_number'] - detected_frames[i-1]['frame_number'] > frame_skip:
-            if current_engagement:
-                engagements.append(current_engagement)
-            current_engagement = [frame]
-        else:
-            current_engagement.append(frame)
-    
-    if current_engagement:
-        engagements.append(current_engagement)
-    
-    print(f"\nReaction times per engagement ({len(engagements)} engagements found):")
-    print("(Shot detected when ammo count decreases)\n")
-    
-    for idx, engagement in enumerate(engagements, 1):
-        first_detection_frame = engagement[0]['frame_number']
-        first_ammo = ammo_counts.get(first_detection_frame)
+    for detection_info in detected_frames_sorted:
+        frame_num = detection_info['frame_number']
+        frame_ammo = ammo_counts.get(frame_num)
         
-        if first_ammo is None:
-            print(f"  Engagement {idx} (starting frame {first_detection_frame}): Could not extract ammo count")
+        if not current_engagement:
+            # Start new engagement
+            current_engagement = [detection_info]
+            current_engagement_ammo = frame_ammo
+            current_engagement_start_frame = frame_num
+        else:
+            last_frame_num = current_engagement[-1]['frame_number']
+            frame_gap = frame_num - last_frame_num
+            time_in_engagement = frame_num - current_engagement_start_frame
+            
+            # Check for 3-second timeout (absolute engagement duration limit)
+            if time_in_engagement > int(3.0 * fps):
+                # 3 seconds elapsed - end engagement
+                engagements.append((current_engagement, current_engagement_ammo))
+                current_engagement = [detection_info]
+                current_engagement_ammo = frame_ammo
+                current_engagement_start_frame = frame_num
+            # Check for ammo change (primary method)
+            elif frame_ammo is not None and current_engagement_ammo is not None:
+                if frame_ammo != current_engagement_ammo:
+                    # Ammo changed - add this frame to current engagement, then end it
+                    current_engagement.append(detection_info)
+                    engagements.append((current_engagement, frame_ammo))
+                    # Don't start new engagement; let next detection do that
+                    current_engagement = []
+                    current_engagement_ammo = None
+                    current_engagement_start_frame = None
+                else:
+                    # Ammo same - continue engagement
+                    current_engagement.append(detection_info)
+            # Check for frame gap (fallback when ammo unreadable)
+            elif frame_gap > frame_gap_threshold:
+                # Large gap indicates new engagement
+                engagements.append((current_engagement, current_engagement_ammo))
+                current_engagement = [detection_info]
+                current_engagement_ammo = frame_ammo
+                current_engagement_start_frame = frame_num
+            else:
+                # Continue current engagement
+                current_engagement.append(detection_info)
+    
+    # Don't forget the last engagement
+    if current_engagement:
+        engagements.append((current_engagement, current_engagement_ammo))
+    
+    print(f"\nReaction Time Analysis: {len(engagements)} engagement(s) detected\n")
+    
+    # Process each engagement
+    for eng_idx, (engagement_frames, final_ammo) in enumerate(engagements, 1):
+        print(f"--- Engagement {eng_idx} ---")
+        
+        # Get the first and last detection frame
+        first_detection_frame = engagement_frames[0]['frame_number']
+        last_detection_frame = engagement_frames[-1]['frame_number']
+        
+        # Get initial ammo at engagement start
+        initial_ammo = ammo_counts.get(first_detection_frame)
+        
+        # Skip engagement if no initial ammo count
+        if initial_ammo is None:
+            print(f"SKIPPED: Could not extract ammo at engagement start")
+            print()
             continue
         
-        # Find the first frame where ammo count decreases (shot fired)
-        shot_frame = None
-        for detection_info in engagement:
-            frame_num = detection_info['frame_number']
-            current_ammo = ammo_counts.get(frame_num)
-            
-            if current_ammo is not None and current_ammo < first_ammo:
-                shot_frame = frame_num
-                break
+        print(f"Enemy appeared at: Frame {first_detection_frame}")
+        print(f"Initial ammo: {initial_ammo}")
         
-        if shot_frame is None:
-            print(f"  Engagement {idx} (starting frame {first_detection_frame}): No shot fired (ammo count did not decrease)")
-        else:
-            reaction_frames = shot_frame - first_detection_frame
+        # Check ammo changes in first 100 frames
+        print("\nFirst 100 frames of engagement:")
+        ammo_changed_in_100 = False
+        for frame_info in engagement_frames:
+            frame_num = frame_info['frame_number']
+            if frame_num - first_detection_frame <= 100:
+                ammo = ammo_counts.get(frame_num)
+                frames_since_start = frame_num - first_detection_frame
+                if ammo is not None:
+                    print(f"  Frame {frame_num} (+{frames_since_start}): {ammo}" + (" ✓ CHANGED" if ammo != initial_ammo else ""))
+                    if ammo != initial_ammo:
+                        ammo_changed_in_100 = True
+                else:
+                    print(f"  Frame {frame_num} (+{frames_since_start}): Failed to extract")
+        
+        if not ammo_changed_in_100:
+            print("  → No ammo change detected in first 100 frames")
+        
+        print("\nFull engagement ammo readings:")
+        for frame_info in engagement_frames:
+            frame_num = frame_info['frame_number']
+            ammo = ammo_counts.get(frame_num)
+            print(f"  Frame {frame_num}: {ammo if ammo else 'Failed to extract'}")
+        
+        # Shot is detected when ammo changed
+        if final_ammo is not None and final_ammo != initial_ammo:
+            reaction_frames = last_detection_frame - first_detection_frame
             reaction_time_seconds = reaction_frames * (frame_skip / fps)
-            print(f"  Engagement {idx} (starting frame {first_detection_frame}): {reaction_time_seconds:.2f} seconds")
+            print(f"Shot fired at: Frame {last_detection_frame}")
+            print(f"Ammo after shot: {final_ammo}")
+            print(f"⚡ Reaction Time: {reaction_time_seconds:.3f} seconds ({reaction_frames} frames, {reaction_time_seconds*1000:.0f}ms)")
+        else:
+            print(f"No shot fired in this engagement (ammo did not change)")
+        
+        print()  # Blank line between engagements
+    
+    # Summary statistics
+    if detected_frames_sorted:
+        first_frame = detected_frames_sorted[0]['frame_number']
+        last_frame = detected_frames_sorted[-1]['frame_number']
+        total_detection_frames = last_frame - first_frame + 1
+        total_actual_frames = len(detected_frames_sorted)
+        print(f"\n=== Summary ===")
+        print(f"Total video frames analyzed: {total_detection_frames} (frames {first_frame} to {last_frame})")
+        print(f"Total detection frames: {total_actual_frames}")
+        print(f"Total engagements: {len(engagements)}")
 
 
-def display_times(single_thread_time, multi_thread_time):
-    """Display both execution times and state which approach was faster."""
-    print('\n' + '='*60)
-    print(f"Single-threaded Detection - Total Time: {single_thread_time:.2f} seconds")
-    print(f"Multithreaded Detection - Total Time: {multi_thread_time:.2f} seconds")
-    if multi_thread_time < single_thread_time:
-        print(f"Multithreaded was faster by {single_thread_time - multi_thread_time:.2f} seconds")
-    elif multi_thread_time > single_thread_time:
-        print(f"Single-threaded was faster by {multi_thread_time - single_thread_time:.2f} seconds")
-    else:
-        print("Both methods took the same time")
-    print('='*60 + '\n')
+def extract_ammo_count(frame, ammo_region=(0.55, 0.88, 0.70, 0.99)):
+    """
+    Extract ammo count from frame using OCR on the HUD region.
+    Region is tuned to capture the magazine ammo counter in Valorant's HUD.
+    
+    Args:
+        frame: Input video frame (numpy array)
+        ammo_region: Tuple (x1, y1, x2, y2) as fractions of image dimensions.
+                    Default (0.68, 0.90, 0.76, 0.99) targets the magazine ammo display.
+    
+    Returns:
+        String of extracted digits, or None if extraction fails
+    """
+    # Find Tesseract binary
+    possible_paths = [
+        r'C:\Program Files\Tesseract-OCR\tesseract.exe',
+        r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe',
+    ]
+    
+    tesseract_path = None
+    for path in possible_paths:
+        if os.path.exists(path):
+            tesseract_path = path
+            break
+    
+    if tesseract_path is None:
+        return None
+
+    try:
+        height, width = frame.shape[:2]
+        x1 = int(ammo_region[0] * width)
+        y1 = int(ammo_region[1] * height)
+        x2 = int(ammo_region[2] * width)
+        y2 = int(ammo_region[3] * height)
+
+        crop = frame[y1:y2, x1:x2]
+        if crop.size == 0:
+            return None
+
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        gray = cv2.resize(gray, None, fx=3.0, fy=3.0, interpolation=cv2.INTER_CUBIC)
+        # Simple threshold - find the right balance
+        _, binary = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
+        binary = cv2.medianBlur(binary, 3)
+
+        # Save binary image to temp file and use Tesseract via subprocess
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+            tmp_path = tmp.name
+            cv2.imwrite(tmp_path, binary)
+        
+        # Also try inverted binary
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+            tmp_inv_path = tmp.name
+            inverted = cv2.bitwise_not(binary)
+            cv2.imwrite(tmp_inv_path, inverted)
+        
+        try:
+            # Try different PSM modes
+            for psm in [6, 7, 11]:
+                for img_path in [tmp_path, tmp_inv_path]:
+                    result = subprocess.run(
+                        [tesseract_path, img_path, 'stdout', '--psm', str(psm)],
+                        capture_output=True,
+                        text=True,
+                        encoding='utf-8',
+                        errors='ignore',
+                        timeout=10
+                    )
+                    
+                    text = result.stdout.strip()
+                    digits = ''.join(ch for ch in text if ch.isdigit())
+                    
+                    if digits:
+                        return digits
+            
+            return None
+        finally:
+            # Clean up temp files
+            for path in [tmp_path, tmp_inv_path]:
+                if os.path.exists(path):
+                    os.remove(path)
+    except Exception as e:
+        return None
 
 
 # Run the detection on a video file
 import os
-video_path = os.path.join(os.path.dirname(__file__), 'testVid2.mp4')
+video_path = os.path.join(os.path.dirname(__file__), 'testVid.mp4')
 
 if __name__ == '__main__':
     # Check number of CPU cores

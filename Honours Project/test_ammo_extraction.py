@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 from PIL import Image
+import os
 
 try:
     import pytesseract
@@ -53,41 +54,46 @@ def extract_ammo_count(frame, ammo_region=(0.80, 0.82, 1.0, 1.0)):
 
 
 if __name__ == '__main__':
-    # Load the image
-    image_path = 'image.jpg'  # Make sure the captured image is named 'image.png'
+    # Load the image from the available filename
+    candidate_files = ['image.png', 'image.jpg', 'image.jpeg']
+    image_path = None
+    for candidate in candidate_files:
+        if os.path.exists(candidate):
+            image_path = candidate
+            break
     
-    try:
-        # Read image with cv2
-        frame = cv2.imread(image_path)
-        
-        if frame is None:
-            print(f"Error: Could not load image from {image_path}")
-        else:
-            print(f"Image loaded successfully. Shape: {frame.shape}")
-            
-            # Test with default region
-            print("\nTesting default ammo region (0.80, 0.82, 1.0, 1.0):")
-            ammo = extract_ammo_count(frame)
-            print(f"Extracted ammo count: {ammo}")
-            
-            # Test with alternative regions to find optimal one
-            test_regions = [
-                ((0.75, 0.80, 1.0, 1.0), "Larger region (0.75, 0.80, 1.0, 1.0)"),
-                ((0.80, 0.75, 1.0, 1.0), "Higher region (0.80, 0.75, 1.0, 1.0)"),
-                ((0.70, 0.78, 1.0, 1.0), "Much larger region (0.70, 0.78, 1.0, 1.0)"),
-            ]
-            
-            print("\nTesting alternative regions:")
-            for region, description in test_regions:
-                ammo = extract_ammo_count(frame, ammo_region=region)
-                print(f"{description}: {ammo}")
-            
-            # Save a visualization of the crop region
-            height, width = frame.shape[:2]
-            x1, y1, x2, y2 = int(0.80 * width), int(0.82 * height), int(1.0 * width), int(1.0 * height)
-            ammo_crop = frame[y1:y2, x1:x2]
-            cv2.imwrite('ammo_crop_preview.png', ammo_crop)
-            print("\nSaved ammo crop preview to: ammo_crop_preview.png")
-    
-    except Exception as e:
-        print(f"Error: {e}")
+    if image_path is None:
+        print('Error: No image file found. Please save your screenshot as image.png, image.jpg, or image.jpeg in this folder.')
+    else:
+        try:
+            frame = cv2.imread(image_path)
+            if frame is None:
+                print(f"Error: Could not load image from {image_path}")
+            else:
+                print(f"Image loaded successfully from {image_path}. Shape: {frame.shape}")
+                
+                # Test with default region
+                print("\nTesting default ammo region (0.80, 0.82, 1.0, 1.0):")
+                ammo = extract_ammo_count(frame)
+                print(f"Extracted ammo count: {ammo}")
+                
+                # Test with alternative regions to find optimal one
+                test_regions = [
+                    ((0.75, 0.80, 1.0, 1.0), "Larger region (0.75, 0.80, 1.0, 1.0)"),
+                    ((0.80, 0.75, 1.0, 1.0), "Higher region (0.80, 0.75, 1.0, 1.0)"),
+                    ((0.70, 0.78, 1.0, 1.0), "Much larger region (0.70, 0.78, 1.0, 1.0)"),
+                ]
+                
+                print("\nTesting alternative regions:")
+                for region, description in test_regions:
+                    ammo = extract_ammo_count(frame, ammo_region=region)
+                    print(f"{description}: {ammo}")
+                
+                # Save a visualization of the crop region
+                height, width = frame.shape[:2]
+                x1, y1, x2, y2 = int(0.80 * width), int(0.82 * height), int(1.0 * width), int(1.0 * height)
+                ammo_crop = frame[y1:y2, x1:x2]
+                cv2.imwrite('ammo_crop_preview.png', ammo_crop)
+                print("\nSaved ammo crop preview to: ammo_crop_preview.png")
+        except Exception as e:
+            print(f"Error: {e}")
