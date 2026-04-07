@@ -63,14 +63,14 @@ def create_main_window():
             [sg.Text('Valorant Aim Tracker', font=('Arial', 18, 'bold'))],
         ], vertical_alignment='top', expand_x=True)],
         
-        [sg.Separator()],
+        [sg.HSeparator()],
         
         # Video Selection
         [sg.Text('VIDEO FILE', font=('Arial', 12, 'bold'))],
         [sg.Text('Select video:'), sg.InputText(key='VIDEO_PATH', disabled=True, size=(40, 1)), 
          sg.FileBrowse(initial_folder=VIDEO_FOLDER, file_types=(('Video Files', '*.mp4 *.avi *.mov'),))],
         
-        [sg.Separator()],
+        [sg.HSeparator()],
         
         # User Selection
         [sg.Text('PLAYER PROFILE', font=('Arial', 12, 'bold'))],
@@ -83,27 +83,27 @@ def create_main_window():
             [sg.Text('Tag:', font=('Arial', 10, 'bold')), sg.Text('', key='USER_TAG', size=(25, 1))],
         ], vertical_alignment='top')],
         
-        [sg.Separator()],
+        [sg.HSeparator()],
         
         # Match Details
         [sg.Text('MATCH DETAILS', font=('Arial', 12, 'bold'))],
         [
             sg.Column([
-                [sg.Text('Map:'), sg.Combo(['Ascent', 'Bind', 'Breeze', 'Fracture', 'Haven', 'Icebox', 
-                                            'Lotus', 'Pearl', 'Split', 'Sunset'], key='MAP', size=(15, 1))],
-                [sg.Text('Score Line:'), sg.InputText(key='SCORELINE', placeholder='e.g., 13-7', size=(15, 1))],
-                [sg.Text('Headshot %:'), sg.InputText(key='HS_PERCENT', placeholder='e.g., 45.2', size=(15, 1))],
+                [sg.Text('Map:'), sg.Combo(['Ascent', 'Bind', 'Haven', 'Split', 'Icebox', 'Breeze', 
+                                            'Fracture', 'Pearl', 'Lotus', 'Sunset', 'Abyss'], key='MAP', size=(15, 1))],
+                [sg.Text('Score Line:'), sg.InputText(key='SCORELINE', default_text='e.g., 13-7', size=(15, 1))],
+                [sg.Text('Headshot %:'), sg.InputText(key='HS_PERCENT', default_text='e.g., 45.2', size=(15, 1))],
             ], vertical_alignment='top'),
             sg.Column([
                 [sg.Text('Kills:'), sg.InputText(key='KILLS', size=(8, 1)),
                  sg.Text('Deaths:'), sg.InputText(key='DEATHS', size=(8, 1)),
                  sg.Text('Assists:'), sg.InputText(key='ASSISTS', size=(8, 1))],
-                [sg.Text('ACS:'), sg.InputText(key='ACS', placeholder='e.g., 245.3', size=(15, 1))],
-                [sg.Text('Notes:'), sg.InputText(key='NOTES', placeholder='Optional notes...', size=(35, 1))],
+                [sg.Text('ACS:'), sg.InputText(key='ACS', default_text='e.g., 245.3', size=(15, 1))],
+                [sg.Text('Notes:'), sg.InputText(key='NOTES', default_text='Optional notes...', size=(35, 1))],
             ], vertical_alignment='top')
         ],
         
-        [sg.Separator()],
+        [sg.HSeparator()],
         
         # Action Buttons
         [sg.Button('Analyze Video', size=(15, 2), button_color=('white', 'green')),
@@ -256,7 +256,7 @@ def main():
             # Create results window
             results_layout = [
                 [sg.Text(f'Matches for {user_data["name"]} ({user_data["tag"]})', font=('Arial', 14, 'bold'))],
-                [sg.Separator()],
+                [sg.HSeparator()],
             ]
             
             for i, match in enumerate(user_data['matches'], 1):

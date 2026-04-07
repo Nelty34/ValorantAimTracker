@@ -598,8 +598,9 @@ def measure_reaction_time(detected_frames, fps, frame_skip, ammo_region=(0.55, 0
         
         print()  # Blank line between engagements
     
-    # Calculate averages
-    avg_reaction_time = sum(reaction_times) / len(reaction_times) if reaction_times else 0
+    # Calculate averages (ignore reaction times > 0.9 seconds)
+    filtered_reaction_times = [rt for rt in reaction_times if rt <= 0.9]
+    avg_reaction_time = sum(filtered_reaction_times) / len(filtered_reaction_times) if filtered_reaction_times else 0
     
     # Calculate most common crosshair placement
     avg_crosshair_placement = None
