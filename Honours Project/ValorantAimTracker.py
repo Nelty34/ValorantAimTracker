@@ -162,8 +162,9 @@ def detect_enemies_in_video(video_path, max_detected_frames_to_display=10, num_w
         detected_frames = check_crosshair_placement(detected_frames)
     
     # Measure reaction time from enemy appearance to shot
+    analysis_results = None
     if detected_frames:
-        measure_reaction_time(detected_frames, fps, frame_skip, video_path=video_path)
+        analysis_results = measure_reaction_time(detected_frames, fps, frame_skip, video_path=video_path)
     
     # Save detected frames to detections folder
     if detected_frames:
@@ -195,7 +196,7 @@ def detect_enemies_in_video(video_path, max_detected_frames_to_display=10, num_w
             print(f"  Saved to: {output_path}")
     
     elapsed_time = time.time() - start_time
-    return elapsed_time
+    return elapsed_time, analysis_results
 
 
 def detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_display=10):
@@ -286,8 +287,9 @@ def detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_d
         detected_frames = check_crosshair_placement(detected_frames)
     
     # Measure reaction time from enemy appearance to shot
+    analysis_results = None
     if detected_frames:
-        measure_reaction_time(detected_frames, fps, frame_skip, video_path=video_path)
+        analysis_results = measure_reaction_time(detected_frames, fps, frame_skip, video_path=video_path)
     
     # Save detected frames to detections folder
     if detected_frames:
@@ -325,7 +327,7 @@ def detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_d
             print(f"  Saved to: {output_path}")
     
     elapsed_time = time.time() - start_time
-    return elapsed_time
+    return elapsed_time, analysis_results
 
 def calculate_crosshair_position(frame_or_frames):
     """
@@ -527,6 +529,11 @@ def measure_reaction_time(detected_frames, fps, frame_skip, ammo_region=(0.55, 0
     
     print(f"\nReaction Time Analysis: {len(engagements)} engagement(s) detected\n")
     
+    # Collect analysis results
+    reaction_times = []
+    crosshair_placements = []
+    engagements_with_shots = 0
+    
     # Process each engagement
     for eng_idx, (engagement_frames, final_ammo) in enumerate(engagements, 1):
         print(f"--- Engagement {eng_idx} ---")
@@ -546,6 +553,12 @@ def measure_reaction_time(detected_frames, fps, frame_skip, ammo_region=(0.55, 0
         
         print(f"Enemy appeared at: Frame {first_detection_frame}")
         print(f"Initial ammo: {initial_ammo}")
+        
+        # Collect crosshair placements from all detections in engagement
+        for detection_info in engagement_frames:
+            for detection in detection_info['detections']:
+                if 'crosshair_placement' in detection:
+                    crosshair_placements.append(detection['crosshair_placement'])
         
         # Check ammo changes in first 100 frames
         print("\nFirst 100 frames of engagement:")
@@ -575,6 +588,8 @@ def measure_reaction_time(detected_frames, fps, frame_skip, ammo_region=(0.55, 0
         if final_ammo is not None and final_ammo != initial_ammo:
             reaction_frames = last_detection_frame - first_detection_frame
             reaction_time_seconds = reaction_frames * (frame_skip / fps)
+            reaction_times.append(reaction_time_seconds)
+            engagements_with_shots += 1
             print(f"Shot fired at: Frame {last_detection_frame}")
             print(f"Ammo after shot: {final_ammo}")
             print(f"⚡ Reaction Time: {reaction_time_seconds:.3f} seconds ({reaction_frames} frames, {reaction_time_seconds*1000:.0f}ms)")
@@ -582,6 +597,17 @@ def measure_reaction_time(detected_frames, fps, frame_skip, ammo_region=(0.55, 0
             print(f"No shot fired in this engagement (ammo did not change)")
         
         print()  # Blank line between engagements
+    
+    # Calculate averages
+    avg_reaction_time = sum(reaction_times) / len(reaction_times) if reaction_times else 0
+    
+    # Calculate most common crosshair placement
+    avg_crosshair_placement = None
+    if crosshair_placements:
+        placement_counts = {}
+        for placement in crosshair_placements:
+            placement_counts[placement] = placement_counts.get(placement, 0) + 1
+        avg_crosshair_placement = max(placement_counts, key=placement_counts.get)
     
     # Summary statistics
     if detected_frames_sorted:
@@ -593,6 +619,19 @@ def measure_reaction_time(detected_frames, fps, frame_skip, ammo_region=(0.55, 0
         print(f"Total video frames analyzed: {total_detection_frames} (frames {first_frame} to {last_frame})")
         print(f"Total detection frames: {total_actual_frames}")
         print(f"Total engagements: {len(engagements)}")
+        print(f"Engagements with shots: {engagements_with_shots}")
+        print(f"Average reaction time: {avg_reaction_time:.3f}s")
+        print(f"Most common crosshair placement: {avg_crosshair_placement}")
+    
+    # Return results dictionary
+    return {
+        'reaction_times': reaction_times,
+        'avg_reaction_time': avg_reaction_time,
+        'crosshair_placements': crosshair_placements,
+        'avg_crosshair_placement': avg_crosshair_placement,
+        'total_engagements': len(engagements),
+        'engagements_with_shots': engagements_with_shots
+    }
 
 
 def extract_ammo_count(frame, ammo_region=(0.55, 0.88, 0.70, 0.99)):
