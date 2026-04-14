@@ -68,9 +68,11 @@ def _process_frame(args):
                     })
         
         if enemy_detections:
+            height, width = frame.shape[:2]
             return {
                 'frame_number': frame_number,
-                'frame_image': frame.copy(),
+                'frame_height': height,
+                'frame_width': width,
                 'detections': enemy_detections,
                 'results': results[0]
             }
@@ -80,14 +82,16 @@ def _process_frame(args):
         return None
 
 
-def detect_enemies_in_video(video_path, max_detected_frames_to_display=10, num_workers=4):
+def detect_enemies_in_video(video_path, max_detected_frames_to_display=10, num_workers=4, chunk_size=50, frame_downsample=1):
     """
-    Process video frame by frame to detect enemies using multiprocessing.
+    Process video frame by frame to detect enemies using multiprocessing with streaming/chunking.
     
     Args:
         video_path (str): Path to the video file
         max_detected_frames_to_display (int): Maximum number of detected frames to display
         num_workers (int): Number of worker processes for parallel processing
+        chunk_size (int): Number of frames to process in each batch (default 50)
+        frame_downsample (int): Downsample frames by this factor to reduce memory (1=no downsampling)
     """
     
     start_time = time.time()
@@ -105,53 +109,61 @@ def detect_enemies_in_video(video_path, max_detected_frames_to_display=10, num_w
     
     print(f"Video loaded: {total_frames} total frames at {fps} FPS")
     print(f"Processing every {frame_skip}th frame for enemies...")
-    print(f"Using {num_workers} worker processes for parallel processing\n")
+    print(f"Using {num_workers} worker processes with chunk size {chunk_size}")
+    if frame_downsample > 1:
+        print(f"Downsampling frames by factor {frame_downsample}")
+    print()
     
-    # Collect frames to process
-    frames_to_process = []
-    frame_count = 0
-    frames_queued = 0
-    
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        
-        if frame_count % frame_skip == 0:
-            frames_to_process.append((frame_count, frame))
-            frames_queued += 1
-            
-            if frames_queued % 100 == 0:
-                print(f"Queued {frames_queued} frames for processing...")
-        
-        frame_count += 1
-    
-    cap.release()
-    print(f"Queued {frames_queued} frames total for processing.\n")
-    
-    # Process frames in parallel using multiprocessing Pool
+    # Process frames in parallel using multiprocessing Pool with streaming
     detected_frames = []
+    ctx = mp.get_context('spawn')
     
-    if frames_to_process:
-        # Use spawn context for more predictable process creation and model initialization
-        ctx = mp.get_context('spawn')
-        with ctx.Pool(processes=num_workers) as pool:
-            # Higher chunksize reduces task scheduling overhead
-            results = pool.imap_unordered(_process_frame, frames_to_process, chunksize=8)
+    with ctx.Pool(processes=num_workers) as pool:
+        frame_count = 0
+        frames_queued = 0
+        processed_count = 0
+        
+        while True:
+            # Load chunk of frames for batch processing
+            frames_to_process = []
+            chunk_start_frame = frame_count
             
-            processed_count = 0
+            while len(frames_to_process) < chunk_size:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                
+                if frame_count % frame_skip == 0:
+                    # Optional: downsample frame to reduce memory
+                    if frame_downsample > 1:
+                        h, w = frame.shape[:2]
+                        frame = cv2.resize(frame, (w // frame_downsample, h // frame_downsample))
+                    
+                    frames_to_process.append((frame_count, frame))
+                    frames_queued += 1
+                
+                frame_count += 1
+            
+            if not frames_to_process:
+                break
+            
+            print(f"Processing frames {chunk_start_frame}-{frame_count} (chunk {len(frames_to_process)} frames)...")
+            
+            # Process this chunk
+            results = pool.imap_unordered(_process_frame, frames_to_process, chunksize=max(1, len(frames_to_process) // num_workers))
+            
             for result in results:
                 processed_count += 1
-                if processed_count % 50 == 0:
-                    print(f"Processed {processed_count}/{frames_queued} frames...")
-                
                 if result is not None:
                     detected_frames.append(result)
+    
+    cap.release()
+    print(f"\nProcessed {processed_count}/{frames_queued} frames total.")
     
     # Sort by frame number to maintain order
     detected_frames.sort(key=lambda x: x['frame_number'])
     
-    print(f"\nDone! Total detected frames with enemies: {len(detected_frames)}\n")
+    print(f"Total detected frames with enemies: {len(detected_frames)}\n")
     
     # Calculate crosshair position for all detected frames
     if detected_frames:
@@ -166,7 +178,7 @@ def detect_enemies_in_video(video_path, max_detected_frames_to_display=10, num_w
     if detected_frames:
         analysis_results = measure_reaction_time(detected_frames, fps, frame_skip, video_path=video_path)
     
-    # Save detected frames to detections folder
+    # Save detected frames to detections folder (reload frames from video for rendering)
     if detected_frames:
         detections_folder = os.path.join(os.path.dirname(video_path), 'detections')
         os.makedirs(detections_folder, exist_ok=True)
@@ -174,26 +186,36 @@ def detect_enemies_in_video(video_path, max_detected_frames_to_display=10, num_w
         frames_to_save = min(max_detected_frames_to_display, len(detected_frames))
         print(f"Saving {frames_to_save} detected frames to '{detections_folder}':")
         
+        cap_save = cv2.VideoCapture(video_path)
         for i, detection_info in enumerate(detected_frames[:frames_to_save]):
-            print(f"\n--- Detection {i+1}/{frames_to_save} ---")
-            print(f"Frame: {detection_info['frame_number']}")
-            print(f"Crosshair Position: {detection_info['crosshair_position']}")
-            for detection in detection_info['detections']:
-                print(f"  {detection['class']}: {detection['confidence']:.2f} confidence")
-                print(f"    Crosshair Placement: {detection['crosshair_placement']}")
-                print(f"    Vertical Offset: {detection['crosshair_y_diff']:.1f} pixels")
+            frame_num = detection_info['frame_number']
+            # Reload frame from video for rendering
+            cap_save.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+            ret, frame = cap_save.read()
             
-            render = render_result(model=model, image=detection_info['frame_image'], result=detection_info['results'])
-            
-            if isinstance(render, Image.Image):
-                render_array = np.array(render)
-                render_array = cv2.cvtColor(render_array, cv2.COLOR_RGB2BGR)
-            else:
-                render_array = render
-            
-            output_path = os.path.join(detections_folder, f"detection_{i+1}_frame_{detection_info['frame_number']}.jpg")
-            cv2.imwrite(output_path, render_array)
-            print(f"  Saved to: {output_path}")
+            if ret:
+                print(f"\n--- Detection {i+1}/{frames_to_save} ---")
+                print(f"Frame: {frame_num}")
+                print(f"Crosshair Position: {detection_info['crosshair_position']}")
+                for detection in detection_info['detections']:
+                    print(f"  {detection['class']}: {detection['confidence']:.2f} confidence")
+                    print(f"    Crosshair Placement: {detection['crosshair_placement']}")
+                    print(f"    Vertical Offset: {detection['crosshair_y_diff']:.1f} pixels")
+                
+                # Render with detection results
+                render = render_result(model=model, image=frame, result=detection_info['results'])
+                
+                if isinstance(render, Image.Image):
+                    render_array = np.array(render)
+                    render_array = cv2.cvtColor(render_array, cv2.COLOR_RGB2BGR)
+                else:
+                    render_array = render
+                
+                output_path = os.path.join(detections_folder, f"detection_{i+1}_frame_{frame_num}.jpg")
+                cv2.imwrite(output_path, render_array)
+                print(f"  Saved to: {output_path}")
+        
+        cap_save.release()
     
     elapsed_time = time.time() - start_time
     return elapsed_time, analysis_results
@@ -260,10 +282,12 @@ def detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_d
                 for detection in enemy_detections:
                     print(f"  - {detection['class']}: {detection['confidence']:.2f} confidence")
                 
-                # Store frame info for later processing
+                # Store frame info for later processing (don't store frame image to save memory)
+                height, width = frame.shape[:2]
                 detected_frames.append({
                     'frame_number': frame_count,
-                    'frame_image': frame.copy(),
+                    'frame_height': height,
+                    'frame_width': width,
                     'detections': enemy_detections,
                     'results': results[0]
                 })
@@ -300,31 +324,40 @@ def detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_d
         frames_to_save = min(max_detected_frames_to_display, len(detected_frames))
         print(f"Saving {frames_to_save} detected frames to '{detections_folder}':")
         
+        cap_save = cv2.VideoCapture(video_path)
         for i, detection_info in enumerate(detected_frames[:frames_to_save]):
-            print(f"\n--- Detection {i+1}/{frames_to_save} ---")
-            print(f"Frame: {detection_info['frame_number']}")
-            print(f"Crosshair Position: {detection_info['crosshair_position']}")
-            for detection in detection_info['detections']:
-                print(f"  {detection['class']}: {detection['confidence']:.2f} confidence")
-                print(f"    Crosshair Placement: {detection['crosshair_placement']}")
-                print(f"    Vertical Offset: {detection['crosshair_y_diff']:.1f} pixels")
+            frame_num = detection_info['frame_number']
+            # Reload frame from video for rendering
+            cap_save.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+            ret, frame = cap_save.read()
             
-            # Render the frame with annotations
-            render = render_result(model=model, image=detection_info['frame_image'], result=detection_info['results'])
-            
-            # Convert render result to numpy array if it's a PIL Image
-            if isinstance(render, Image.Image):
-                render_array = np.array(render)
-                # Convert RGB to BGR for cv2.imwrite
-                render_array = cv2.cvtColor(render_array, cv2.COLOR_RGB2BGR)
-            else:
-                # Already in BGR format
-                render_array = render
-            
-            # Save the frame
-            output_path = os.path.join(detections_folder, f"detection_{i+1}_frame_{detection_info['frame_number']}.jpg")
-            cv2.imwrite(output_path, render_array)
-            print(f"  Saved to: {output_path}")
+            if ret:
+                print(f"\n--- Detection {i+1}/{frames_to_save} ---")
+                print(f"Frame: {frame_num}")
+                print(f"Crosshair Position: {detection_info['crosshair_position']}")
+                for detection in detection_info['detections']:
+                    print(f"  {detection['class']}: {detection['confidence']:.2f} confidence")
+                    print(f"    Crosshair Placement: {detection['crosshair_placement']}")
+                    print(f"    Vertical Offset: {detection['crosshair_y_diff']:.1f} pixels")
+                
+                # Render the frame with annotations
+                render = render_result(model=model, image=frame, result=detection_info['results'])
+                
+                # Convert render result to numpy array if it's a PIL Image
+                if isinstance(render, Image.Image):
+                    render_array = np.array(render)
+                    # Convert RGB to BGR for cv2.imwrite
+                    render_array = cv2.cvtColor(render_array, cv2.COLOR_RGB2BGR)
+                else:
+                    # Already in BGR format
+                    render_array = render
+                
+                # Save the frame
+                output_path = os.path.join(detections_folder, f"detection_{i+1}_frame_{frame_num}.jpg")
+                cv2.imwrite(output_path, render_array)
+                print(f"  Saved to: {output_path}")
+        
+        cap_save.release()
     
     elapsed_time = time.time() - start_time
     return elapsed_time, analysis_results
@@ -351,8 +384,17 @@ def calculate_crosshair_position(frame_or_frames):
     # Case 2: List of detection dictionaries
     elif isinstance(frame_or_frames, list):
         for detection_info in frame_or_frames:
-            frame = detection_info['frame_image']
-            height, width = frame.shape[:2]
+            # Get frame dimensions from stored values (stored to save memory)
+            if 'frame_height' in detection_info and 'frame_width' in detection_info:
+                height = detection_info['frame_height']
+                width = detection_info['frame_width']
+            elif 'frame_image' in detection_info:
+                # Fallback for older format
+                frame = detection_info['frame_image']
+                height, width = frame.shape[:2]
+            else:
+                raise KeyError("Detection info missing frame dimensions")
+            
             crosshair_x = width // 2
             crosshair_y = height // 2
             detection_info['crosshair_position'] = (crosshair_x, crosshair_y)
@@ -427,13 +469,34 @@ def measure_reaction_time(detected_frames, fps, frame_skip, ammo_region=(0.55, 0
     successful_extractions = 0
     failed_extractions = 0
     
+    # Reload frames from video for ammo extraction to save memory
+    cap_ammo = cv2.VideoCapture(video_path)
+    if not cap_ammo.isOpened():
+        print("Warning: Could not reload video for ammo extraction")
+        cap_ammo = None
+    
     for detection_info in detected_frames_sorted:
-        ammo = extract_ammo_count(detection_info['frame_image'], ammo_region)
+        frame = None
+        if cap_ammo is not None:
+            frame_num = detection_info['frame_number']
+            cap_ammo.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+            ret, frame = cap_ammo.read()
+            if not ret:
+                frame = None
+        
+        if frame is not None:
+            ammo = extract_ammo_count(frame, ammo_region)
+        else:
+            ammo = None
+        
         ammo_counts[detection_info['frame_number']] = ammo
         if ammo is not None:
             successful_extractions += 1
         else:
             failed_extractions += 1
+    
+    if cap_ammo is not None:
+        cap_ammo.release()
     
     print(f"Ammo extraction complete: {successful_extractions} successful, {failed_extractions} failed\n")
     
@@ -729,12 +792,25 @@ if __name__ == '__main__':
     num_cores = mp.cpu_count()
     print(f"System has {num_cores} CPU cores\n")
     
+    # Memory optimization parameters for large videos
+    # Reduce chunk_size and increase frame_downsample if running out of memory
+    chunk_size = 50  # Process 50 frames at a time
+    frame_downsample = 1  # Don't downsample frames (set to 2 to reduce memory by 4x)
+    
     if num_cores < 4:
         print("Running single-threaded detection (system has fewer than 4 cores)...\n")
         elapsed, analysis_results = detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_display=5)
     else:
         print(f"Running multiprocessing detection (system has {num_cores} cores)...\n")
-        elapsed, analysis_results = detect_enemies_in_video(video_path, max_detected_frames_to_display=25, num_workers=4)
+        print(f"Memory optimization: chunk_size={chunk_size}, frame_downsample={frame_downsample}x")
+        print("(Tip: Reduce chunk_size or increase frame_downsample if running out of memory)\n")
+        elapsed, analysis_results = detect_enemies_in_video(
+            video_path, 
+            max_detected_frames_to_display=25, 
+            num_workers=4,
+            chunk_size=chunk_size,
+            frame_downsample=frame_downsample
+        )
 
     print(f"\nTotal Time: {elapsed:.2f} seconds")
     if analysis_results is not None:
