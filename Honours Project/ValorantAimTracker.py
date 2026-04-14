@@ -731,9 +731,11 @@ if __name__ == '__main__':
     
     if num_cores < 4:
         print("Running single-threaded detection (system has fewer than 4 cores)...\n")
-        elapsed = detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_display=5)
-        print(f"\nTotal Time: {elapsed:.2f} seconds")
+        elapsed, analysis_results = detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_display=5)
     else:
         print(f"Running multiprocessing detection (system has {num_cores} cores)...\n")
-        elapsed = detect_enemies_in_video(video_path, max_detected_frames_to_display=25, num_workers=4)
-        print(f"\nTotal Time: {elapsed:.2f} seconds")
+        elapsed, analysis_results = detect_enemies_in_video(video_path, max_detected_frames_to_display=25, num_workers=4)
+
+    print(f"\nTotal Time: {elapsed:.2f} seconds")
+    if analysis_results is not None:
+        print(f"Analysis results: {analysis_results}")
