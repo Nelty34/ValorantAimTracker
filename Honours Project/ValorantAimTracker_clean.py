@@ -7,8 +7,7 @@ import multiprocessing as mp
 
 import cv2
 import numpy as np
-from PIL import Image
-from ultralyticsplus import YOLO, render_result
+from ultralyticsplus import YOLO
 import torch
 import ultralytics.nn.tasks  # noqa: F401
 import ultralytics.nn.modules  # noqa: F401
@@ -36,6 +35,7 @@ DEFAULT_FRAME_SKIP_MULTI = 3
 DEFAULT_FRAME_SKIP_SINGLE = 5
 DEFAULT_AMMO_REGION = (0.55, 0.88, 0.70, 0.99)
 DEFAULT_SPECTATE_REGION = (0.00, 0.70, 0.34, 0.86)
+DEAD_CHECK_INTERVAL = 10
 DEFAULT_VIDEO_NAME = 'twig1.mp4'
 
 
@@ -161,9 +161,6 @@ def _process_frame(args):
     """Worker function for multiprocessing pool that detects enemies in a frame."""
     frame_number, frame = args
     try:
-        if is_player_dead(frame):
-            return None
-
         results = model.predict(frame, classes=ENEMY_CLASS_INDICES)
         enemy_detections = []
 
@@ -189,7 +186,6 @@ def _process_frame(args):
             'frame_height': height,
             'frame_width': width,
             'detections': enemy_detections,
-            'results': results[0],
         }
     except Exception:
         return None
@@ -430,36 +426,6 @@ def measure_reaction_time(detected_frames, fps, frame_skip, ammo_region=DEFAULT_
     }
 
 
-def _save_detected_frames(video_path, detected_frames, max_detected_frames_to_display):
-    """Save a sample of detected frames with YOLO render overlays."""
-    if not detected_frames or max_detected_frames_to_display <= 0:
-        return
-
-    detections_folder = os.path.join(os.path.dirname(video_path), 'detections')
-    os.makedirs(detections_folder, exist_ok=True)
-
-    frames_to_save = min(max_detected_frames_to_display, len(detected_frames))
-    cap_save = cv2.VideoCapture(video_path)
-
-    for i, detection_info in enumerate(detected_frames[:frames_to_save], start=1):
-        frame_num = detection_info['frame_number']
-        cap_save.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
-        ret, frame = cap_save.read()
-        if not ret:
-            continue
-
-        render = render_result(model=model, image=frame, result=detection_info['results'])
-        if isinstance(render, Image.Image):
-            render_array = cv2.cvtColor(np.array(render), cv2.COLOR_RGB2BGR)
-        else:
-            render_array = render
-
-        output_path = os.path.join(detections_folder, f"detection_{i}_frame_{frame_num}.jpg")
-        cv2.imwrite(output_path, render_array)
-
-    cap_save.release()
-
-
 def _run_detection(video_path, frame_skip, max_detected_frames_to_display=10, num_workers=None,
                    chunk_size=50, frame_downsample=1):
     start_time = time.time()
@@ -469,6 +435,8 @@ def _run_detection(video_path, frame_skip, max_detected_frames_to_display=10, nu
 
     fps = cap.get(cv2.CAP_PROP_FPS)
     detected_frames = []
+    processed_frame_index = 0
+    last_dead_state = False
 
     if num_workers and num_workers > 1:
         ctx = mp.get_context('spawn')
@@ -480,15 +448,25 @@ def _run_detection(video_path, frame_skip, max_detected_frames_to_display=10, nu
                     ret, frame = cap.read()
                     if not ret:
                         break
+
                     if frame_count % frame_skip == 0:
-                        if frame_downsample > 1:
-                            h, w = frame.shape[:2]
-                            frame = cv2.resize(frame, (w // frame_downsample, h // frame_downsample))
-                        frames_to_process.append((frame_count, frame))
+                        if processed_frame_index % DEAD_CHECK_INTERVAL == 0:
+                            last_dead_state = is_player_dead(frame)
+
+                        if not last_dead_state:
+                            if frame_downsample > 1:
+                                h, w = frame.shape[:2]
+                                frame = cv2.resize(frame, (w // frame_downsample, h // frame_downsample))
+                            frames_to_process.append((frame_count, frame))
+
+                        processed_frame_index += 1
+
                     frame_count += 1
 
                 if not frames_to_process:
-                    break
+                    if not ret:
+                        break
+                    continue
 
                 results = pool.imap_unordered(
                     _process_frame,
@@ -504,8 +482,12 @@ def _run_detection(video_path, frame_skip, max_detected_frames_to_display=10, nu
             ret, frame = cap.read()
             if not ret:
                 break
+
             if frame_count % frame_skip == 0:
-                if not is_player_dead(frame):
+                if processed_frame_index % DEAD_CHECK_INTERVAL == 0:
+                    last_dead_state = is_player_dead(frame)
+
+                if not last_dead_state:
                     results = model.predict(frame, classes=ENEMY_CLASS_INDICES)
                     enemy_detections = []
                     for result in results:
@@ -527,8 +509,10 @@ def _run_detection(video_path, frame_skip, max_detected_frames_to_display=10, nu
                             'frame_height': height,
                             'frame_width': width,
                             'detections': enemy_detections,
-                            'results': results[0],
                         })
+
+                processed_frame_index += 1
+
             frame_count += 1
 
     cap.release()
@@ -539,8 +523,6 @@ def _run_detection(video_path, frame_skip, max_detected_frames_to_display=10, nu
         check_crosshair_placement(detected_frames)
 
     analysis_results = measure_reaction_time(detected_frames, fps, frame_skip, video_path=video_path) if detected_frames else None
-    _save_detected_frames(video_path, detected_frames, max_detected_frames_to_display)
-
     return time.time() - start_time, analysis_results
 
 
