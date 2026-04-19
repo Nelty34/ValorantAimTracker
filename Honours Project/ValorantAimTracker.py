@@ -56,7 +56,7 @@ def _process_frame(args):
     try:
         # Skip frames where the player is dead / spectating
         if is_player_dead(frame, debug=True,
-    debug_save_path="dead_check_debug.jpg"):
+        debug_save_path="dead_check_debug.jpg"):
             return None
         
         results = model.predict(frame, classes=ENEMY_CLASS_INDICES)
@@ -967,7 +967,7 @@ def extract_ammo_count(frame, ammo_region=(0.55, 0.88, 0.70, 0.99)):
 
 # Run the detection on a video file
 import os
-video_path = os.path.join(os.path.dirname(__file__), 'testVid.mp4')
+video_path = os.path.join(os.path.dirname(__file__), 'short_test_vid.mp4')
 
 if __name__ == '__main__':
     # Check number of CPU cores
