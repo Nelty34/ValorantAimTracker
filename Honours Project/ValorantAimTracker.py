@@ -1,3 +1,5 @@
+from difflib import SequenceMatcher
+
 from ultralyticsplus import YOLO, render_result
 import torch
 import ultralytics.nn.tasks
@@ -52,6 +54,11 @@ def _process_frame(args):
     """Worker function for multiprocessing pool that detects enemies in a frame."""
     frame_number, frame = args
     try:
+        # Skip frames where the player is dead / spectating
+        if is_player_dead(frame, debug=True,
+    debug_save_path="dead_check_debug.jpg"):
+            return None
+        
         results = model.predict(frame, classes=ENEMY_CLASS_INDICES)
         enemy_detections = []
         for result in results:
@@ -441,6 +448,181 @@ def check_crosshair_placement(detected_frames, threshold=20):
     
     return detected_frames
 
+def _find_tesseract_path():
+    possible_paths = [
+        r'C:\Program Files\Tesseract-OCR\tesseract.exe',
+        r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe',
+    ]
+    for path in possible_paths:
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def _ocr_text_from_image(image, psm=7, whitelist="ABCDEFGHIJKLMNOPQRSTUVWXYZ "):
+    """
+    OCR helper using Tesseract via subprocess.
+    Returns extracted uppercase text or empty string.
+    """
+    tesseract_path = _find_tesseract_path()
+    if tesseract_path is None:
+        return ""
+
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            tmp_path = tmp.name
+            cv2.imwrite(tmp_path, image)
+
+        result = subprocess.run(
+            [
+                tesseract_path,
+                tmp_path,
+                "stdout",
+                "--psm", str(psm),
+                "-c", f"tessedit_char_whitelist={whitelist}"
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+            timeout=10
+        )
+
+        text = result.stdout.strip().upper()
+        return text
+    except Exception:
+        return ""
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
+def is_player_dead(
+    frame,
+    spectate_region=(0.00, 0.70, 0.34, 0.86),
+    template_path=None,
+    ocr_similarity_threshold=0.72,
+    template_threshold=0.70,
+    debug=False,
+    debug_save_path=None
+):
+    """
+    Detect whether the player is dead/spectating by checking for the
+    bottom-left spectate banner, specifically the 'SWITCH PLAYER' text.
+
+    Args:
+        frame: OpenCV BGR frame
+        spectate_region: (x1, y1, x2, y2) fractions of full frame
+                         Bottom-left region where spectate card appears.
+        template_path: optional path to an image containing just the
+                       'SWITCH PLAYER' strip for template matching fallback.
+        ocr_similarity_threshold: similarity threshold for OCR text match
+        template_threshold: threshold for cv2.matchTemplate fallback
+        debug: print debug info
+        debug_save_path: optional path to save debug crop image
+
+    Returns:
+        True if likely spectating/dead, False otherwise
+    """
+    h, w = frame.shape[:2]
+    x1 = int(spectate_region[0] * w)
+    y1 = int(spectate_region[1] * h)
+    x2 = int(spectate_region[2] * w)
+    y2 = int(spectate_region[3] * h)
+
+    roi = frame[y1:y2, x1:x2]
+    if roi.size == 0:
+        return False
+
+    # Focus more on the lower-right text strip rather than the portrait
+    rh, rw = roi.shape[:2]
+    text_roi = roi[int(rh * 0.40):rh, int(rw * 0.32):rw]
+
+    # Preprocess for OCR
+    gray = cv2.cvtColor(text_roi, cv2.COLOR_BGR2GRAY)
+    gray = cv2.resize(gray, None, fx=3.0, fy=3.0, interpolation=cv2.INTER_CUBIC)
+
+    # Try both normal and inverted thresholds
+    _, binary = cv2.threshold(gray, 160, 255, cv2.THRESH_BINARY)
+    binary_inv = cv2.bitwise_not(binary)
+
+    # OCR attempts
+    ocr_candidates = []
+    for img in [binary, binary_inv]:
+        for psm in [7, 6, 11]:
+            text = _ocr_text_from_image(img, psm=psm)
+            if text:
+                ocr_candidates.append(text)
+
+    target = "SWITCHPLAYER"
+
+    best_text = ""
+    best_score = 0.0
+
+    for text in ocr_candidates:
+        normalized = "".join(ch for ch in text if ch.isalpha())
+        if not normalized:
+            continue
+
+        score = SequenceMatcher(None, normalized, target).ratio()
+
+        if target in normalized:
+            score = 1.0
+
+        if score > best_score:
+            best_score = score
+            best_text = normalized
+
+    if debug:
+        print(f"[SPECTATE CHECK] OCR candidates: {ocr_candidates}")
+        print(f"[SPECTATE CHECK] Best OCR match: '{best_text}' score={best_score:.3f}")
+
+    if best_score >= ocr_similarity_threshold:
+        if debug_save_path:
+            cv2.imwrite(debug_save_path, text_roi)
+        return True
+
+    # Optional fallback: template match on the lower text strip only
+    if template_path is not None and os.path.exists(template_path):
+        template = cv2.imread(template_path)
+        if template is not None:
+            tpl_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+            roi_gray = cv2.cvtColor(text_roi, cv2.COLOR_BGR2GRAY)
+
+            best_template_score = 0.0
+
+            # Try a few scales to handle resolution differences
+            for scale in [0.8, 0.9, 1.0, 1.1, 1.2]:
+                scaled_tpl = cv2.resize(
+                    tpl_gray,
+                    None,
+                    fx=scale,
+                    fy=scale,
+                    interpolation=cv2.INTER_CUBIC
+                )
+                th, tw = scaled_tpl.shape[:2]
+                rh2, rw2 = roi_gray.shape[:2]
+
+                if th > rh2 or tw > rw2:
+                    continue
+
+                result = cv2.matchTemplate(roi_gray, scaled_tpl, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, _ = cv2.minMaxLoc(result)
+                best_template_score = max(best_template_score, max_val)
+
+            if debug:
+                print(f"[SPECTATE CHECK] Template score={best_template_score:.3f}")
+
+            if best_template_score >= template_threshold:
+                if debug_save_path:
+                    cv2.imwrite(debug_save_path, text_roi)
+                return True
+
+    if debug_save_path:
+        cv2.imwrite(debug_save_path, text_roi)
+
+    return False
 
 def measure_reaction_time(detected_frames, fps, frame_skip, ammo_region=(0.55, 0.88, 0.70, 0.99), video_path=None):
     """
