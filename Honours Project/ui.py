@@ -91,6 +91,7 @@ def create_main_window():
             sg.Column([
                 [sg.Text('Map:'), sg.Combo(['Ascent', 'Bind', 'Haven', 'Split', 'Icebox', 'Breeze', 
                                             'Fracture', 'Pearl', 'Lotus', 'Sunset', 'Abyss'], key='MAP', size=(15, 1))],
+                [sg.Text('Result:'), sg.Combo(['Win', 'Loss'], key='RESULT', size=(15, 1))],
                 [sg.Text('Score Line:'), sg.InputText(key='SCORELINE', default_text='e.g., 13-7', size=(15, 1))],
                 [sg.Text('Headshot %:'), sg.InputText(key='HS_PERCENT', default_text='e.g., 45.2', size=(15, 1))],
             ], vertical_alignment='top'),
@@ -170,6 +171,10 @@ def main():
                 sg.popup_error('Please select a map')
                 continue
             
+            if not values['RESULT']:
+                sg.popup_error('Please select Win or Loss')
+                continue
+            
             # Validate numeric inputs
             try:
                 kills = int(values['KILLS']) if values['KILLS'] else 0
@@ -198,6 +203,7 @@ def main():
                 # Save match data
                 match_data = {
                     'map': values['MAP'],
+                    'result': values['RESULT'],
                     'scoreline': values['SCORELINE'],
                     'kills': kills,
                     'deaths': deaths,
@@ -259,7 +265,7 @@ def main():
             
             for i, match in enumerate(user_data['matches'], 1):
                 results_layout.append([
-                    sg.Text(f'Match {i}: {match["map"]} | {match["scoreline"]} | K/D/A: {match["kills"]}/{match["deaths"]}/{match["assists"]} | HS: {match["hs_percent"]}% | ACS: {match["acs"]}')
+                    sg.Text(f'Match {i}: {match["result"].upper()} on {match["map"]} | {match["scoreline"]} | K/D/A: {match["kills"]}/{match["deaths"]}/{match["assists"]} | HS: {match["hs_percent"]}% | ACS: {match["acs"]}')
                 ])
                 if match['notes']:
                     results_layout.append([sg.Text(f'  Notes: {match["notes"]}', text_color='gray')])
