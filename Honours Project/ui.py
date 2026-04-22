@@ -192,10 +192,8 @@ def main():
                 selected_user = values['USER_SELECT']
                 
                 num_cores = mp.cpu_count()
-                if num_cores < 4:
-                    elapsed, analysis_results = detect_enemies_in_video_single_threaded(video_path, max_detected_frames_to_display=5)
-                else:
-                    elapsed, analysis_results = detect_enemies_in_video(video_path, max_detected_frames_to_display=25, num_workers=4)
+                
+                elapsed, analysis_results = detect_enemies_in_video(video_path, max_detected_frames_to_display=25, num_workers=4)
                 
                 # Save match data
                 match_data = {
