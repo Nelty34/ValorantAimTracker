@@ -428,7 +428,8 @@ def _run_detection(video_path, frame_skip, max_detected_frames_to_display=10, nu
                     if frame_count % frame_skip == 0:
                         if processed_frame_index % DEAD_CHECK_INTERVAL == 0:
                             last_dead_state = is_player_dead(frame)
-                        # If the player is not dead/spectating, add the frame to the list of frames to be processed by the multiprocessing pool
+
+                        if not last_dead_state:
                             if frame_downsample > 1:
                                 h, w = frame.shape[:2]
                                 frame = cv2.resize(frame, (w // frame_downsample, h // frame_downsample))
