@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Valorant Performance Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+:root{
+  --bg:#0f1923;
+  --panel:#1f2a36;
+  --panel-2:#18222d;
+  --accent:#ff4655;
+  --text:#ffffff;
+  --muted:#b9c2cc;
+  --border:#2b3744;
+}
+*{box-sizing:border-box}
+body{font-family:Arial,sans-serif;background-color:var(--bg);color:var(--text);margin:0;padding:0}
+header{background-color:var(--accent);padding:20px;text-align:center;font-size:24px;font-weight:bold}
+.container{padding:20px;max-width:1400px;margin:0 auto}
+.toolbar{display:grid;grid-template-columns:1.4fr 1fr auto auto;gap:12px;margin-bottom:20px}
+.card{background-color:var(--panel);padding:20px;margin-bottom:20px;border-radius:10px;border:1px solid var(--border)}
+h2{color:var(--accent);margin-top:0}
+input,select,button{width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--panel-2);color:var(--text)}
+button{cursor:pointer;font-weight:bold}
+button:hover{filter:brightness(1.08)}
+.helper{color:var(--muted);font-size:14px;margin-top:8px}
+.stat-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:15px}
+.stat-box{background-color:var(--panel-2);padding:15px;border-radius:8px;text-align:center}
+.stat-label{color:var(--muted);font-size:13px;margin-top:4px}
+.stat-value{font-size:22px;font-weight:bold;color:var(--accent)}
+.chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+table{width:100%;border-collapse:collapse;margin-top:10px}
+table th,table td{padding:10px;border-bottom:1px solid #333;text-align:left}
+table th{background-color:var(--panel-2)}
+.table-wrap{overflow-x:auto}
+.empty{color:var(--muted);padding:12px 0}
+.badge{display:inline-block;padding:4px 8px;border-radius:999px;font-size:12px;font-weight:bold;background:var(--panel-2);color:var(--muted)}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.small{font-size:13px;color:var(--muted)}
+.clickable-row{cursor:pointer}
+.clickable-row:hover{background-color:#223140}
+.selected-row{background-color:#2a3a49}
+.match-header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.hidden{display:none !important}
+@media (max-width:1100px){.stat-grid{grid-template-columns:repeat(3,1fr)}.chart-grid{grid-template-columns:1fr}.toolbar{grid-template-columns:1fr}}
+@media (max-width:700px){.stat-grid{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<header>Valorant Performance Dashboard</header>
+<div class="container">
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <h2 style="margin-bottom:8px;">Load Player Data</h2>
+      </div>
+      <span class="badge" id="dataStatus">No data loaded</span>
+    </div>
+
+    <div class="toolbar" style="margin-top:16px;">
+      <input type="text" id="searchInput" placeholder="Search by player name or tag..." />
+      <select id="userSelect"><option value="">Select a player...</option></select>
+      <button id="loadDefaultBtn">Load users.json</button>
+      <input type="file" id="fileInput" accept=".json,application/json" />
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Player Overview</h2>
+    <div class="stat-grid">
+      <div class="stat-box"><div class="stat-value" id="playerName">-</div><div class="stat-label">Player</div></div>
+      <div class="stat-box"><div class="stat-value" id="playerTag">-</div><div class="stat-label">Tag</div></div>
+      <div class="stat-box"><div class="stat-value" id="totalMatches">0</div><div class="stat-label">Matches</div></div>
+      <div class="stat-box"><div class="stat-value" id="avgReaction">-</div><div class="stat-label">Avg Reaction Time</div></div>
+      <div class="stat-box"><div class="stat-value" id="avgHS">-</div><div class="stat-label">Avg HS %</div></div>
+      <div class="stat-box"><div class="stat-value" id="avgACS">-</div><div class="stat-label">Avg ACS</div></div>
+    </div>
+  </div>
+
+  <div class="chart-grid">
+    <div class="card">
+      <h2>Reaction Time by Match</h2>
+      <canvas id="reactionChart"></canvas>
+      <div id="reactionEmpty" class="empty" style="display:none;">No reaction time data available.</div>
+    </div>
+
+    <div class="card">
+      <h2>Headshot % and ACS</h2>
+      <canvas id="performanceChart"></canvas>
+      <div id="performanceEmpty" class="empty" style="display:none;">No HS% / ACS data available.</div>
+    </div>
+  </div>
+
+  <div class="chart-grid">
+    <div class="card">
+      <h2>Engagements by Match</h2>
+      <canvas id="engagementChart"></canvas>
+      <div id="engagementEmpty" class="empty" style="display:none;">No engagement data available.</div>
+    </div>
+
+    <div class="card">
+      <h2>Kills / Deaths / Assists</h2>
+      <canvas id="kdaChart"></canvas>
+      <div id="kdaEmpty" class="empty" style="display:none;">No KDA data available.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="match-header">
+      <h2 style="margin-bottom:0;">Match History</h2>
+      <div class="small">Click a match row to view match-specific charts.</div>
+    </div>
+    <div class="table-wrap">
+      <table id="matchTable">
+        <thead>
+          <tr>
+            <th>#</th><th>Map</th><th>Score</th><th>K / D / A</th><th>HS %</th><th>ACS</th><th>Avg Reaction</th><th>Engagements</th><th>Crosshair Placement</th><th>Notes</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div id="tableEmpty" class="empty">Load a user to see match history.</div>
+  </div>
+
+  <div class="card hidden" id="matchDetailCard">
+    <div class="match-header">
+      <div>
+        <h2 id="matchDetailTitle" style="margin-bottom:8px;">Match Details</h2>
+        <div class="small" id="matchDetailSubtitle">Select a match to see its charts.</div>
+      </div>
+      <button id="clearMatchSelectionBtn" style="max-width:220px;">Clear Match Selection</button>
+    </div>
+
+    <div class="stat-grid" style="margin-top:16px;">
+      <div class="stat-box"><div class="stat-value" id="detailMap">-</div><div class="stat-label">Map</div></div>
+      <div class="stat-box"><div class="stat-value" id="detailScore">-</div><div class="stat-label">Score</div></div>
+      <div class="stat-box"><div class="stat-value" id="detailKDA">-</div><div class="stat-label">K / D / A</div></div>
+      <div class="stat-box"><div class="stat-value" id="detailHS">-</div><div class="stat-label">HS %</div></div>
+      <div class="stat-box"><div class="stat-value" id="detailACS">-</div><div class="stat-label">ACS</div></div>
+      <div class="stat-box"><div class="stat-value" id="detailReaction">-</div><div class="stat-label">Avg Reaction</div></div>
+    </div>
+
+    <div class="chart-grid" style="margin-top:20px;">
+      <div class="card" style="margin-bottom:0;">
+        <h2>Reaction Times in Selected Match</h2>
+        <canvas id="matchReactionChart"></canvas>
+        <div id="matchReactionEmpty" class="empty" style="display:none;">No per-engagement reaction time data for this match.</div>
+      </div>
+
+      <div class="card" style="margin-bottom:0;">
+        <h2>Crosshair Placement Across Match</h2>
+        <canvas id="matchSummaryChart"></canvas>
+        <div id="matchSummaryEmpty" class="empty" style="display:none;">No crosshair placement data for this match.</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+let allUsers = {};
+let reactionChart, performanceChart, engagementChart, kdaChart;
+let matchReactionChart, matchSummaryChart;
+
+function average(nums){
+  const valid = nums.filter(v => Number.isFinite(v));
+  if (!valid.length) return null;
+  return valid.reduce((a,b)=>a+b,0) / valid.length;
+}
+function formatMsFromSeconds(sec){
+  if (!Number.isFinite(sec)) return "-";
+  return `${Math.round(sec * 1000)}ms`;
+}
+function formatNumber(value, digits=1){
+  return Number.isFinite(value) ? value.toFixed(digits) : "-";
+}
+function getUserEntries(){
+  return Object.entries(allUsers || {});
+}
+function filteredUserEntries(query){
+  const q = query.trim().toLowerCase();
+  if (!q) return getUserEntries();
+  return getUserEntries().filter(([key, user]) => {
+    const name = ((user && user.name) ? user.name : key || "").toLowerCase();
+    const tag = ((user && user.tag) ? user.tag : "").toLowerCase();
+    return name.includes(q) || tag.includes(q);
+  });
+}
+function populateUserSelect(entries){
+  const select = document.getElementById("userSelect");
+  const current = select.value;
+  select.innerHTML = '<option value="">Select a player...</option>';
+  entries.forEach(([key, user]) => {
+    const opt = document.createElement("option");
+    opt.value = key;
+    opt.textContent = `${user.name || key}${user.tag ? ` (${user.tag})` : ""}`;
+    select.appendChild(opt);
+  });
+  if ([...select.options].some(o => o.value === current)) select.value = current;
+}
+function destroyCharts(){
+  [reactionChart, performanceChart, engagementChart, kdaChart].forEach(chart => { if (chart) chart.destroy(); });
+}
+function destroyMatchCharts(){
+  [matchReactionChart, matchSummaryChart].forEach(chart => { if (chart) chart.destroy(); });
+}
+function toggleEmpty(canvasId, emptyId, showEmpty){
+  document.getElementById(canvasId).style.display = showEmpty ? "none" : "block";
+  document.getElementById(emptyId).style.display = showEmpty ? "block" : "none";
+}
+
+function buildCharts(matches){
+  destroyCharts();
+  const labels = matches.map((m, i) => `Match ${i + 1}`);
+
+  const reactionData = matches.map(m => Number(m.avg_reaction_time)).filter(v => Number.isFinite(v));
+  toggleEmpty("reactionChart", "reactionEmpty", reactionData.length === 0);
+  if (reactionData.length){
+    reactionChart = new Chart(document.getElementById("reactionChart"), {
+      type: "line",
+      data: { labels, datasets: [{ label: "Avg Reaction Time (ms)", data: matches.map(m => Number.isFinite(Number(m.avg_reaction_time)) ? Math.round(Number(m.avg_reaction_time) * 1000) : null), tension: 0.3 }] },
+      options: { responsive: true, maintainAspectRatio: true }
+    });
+  }
+
+  const hsValues = matches.map(m => Number(m.hs_percent));
+  const acsValues = matches.map(m => Number(m.acs));
+  const performanceHasData = hsValues.some(Number.isFinite) || acsValues.some(Number.isFinite);
+  toggleEmpty("performanceChart", "performanceEmpty", !performanceHasData);
+  if (performanceHasData){
+    performanceChart = new Chart(document.getElementById("performanceChart"), {
+      type: "bar",
+      data: { labels, datasets: [{ label: "HS %", data: hsValues.map(v => Number.isFinite(v) ? v : null) }, { label: "ACS", data: acsValues.map(v => Number.isFinite(v) ? v : null) }] },
+      options: { responsive: true, maintainAspectRatio: true }
+    });
+  }
+
+  const totalEng = matches.map(m => Number(m.total_engagements));
+  const shotEng = matches.map(m => Number(m.engagements_with_shots));
+  const engagementHasData = totalEng.some(Number.isFinite) || shotEng.some(Number.isFinite);
+  toggleEmpty("engagementChart", "engagementEmpty", !engagementHasData);
+  if (engagementHasData){
+    engagementChart = new Chart(document.getElementById("engagementChart"), {
+      type: "bar",
+      data: { labels, datasets: [{ label: "Total Engagements", data: totalEng.map(v => Number.isFinite(v) ? v : null) }, { label: "Engagements With Shots", data: shotEng.map(v => Number.isFinite(v) ? v : null) }] },
+      options: { responsive: true, maintainAspectRatio: true }
+    });
+  }
+
+  const kills = matches.map(m => Number(m.kills));
+  const deaths = matches.map(m => Number(m.deaths));
+  const assists = matches.map(m => Number(m.assists));
+  const kdaHasData = kills.some(Number.isFinite) || deaths.some(Number.isFinite) || assists.some(Number.isFinite);
+  toggleEmpty("kdaChart", "kdaEmpty", !kdaHasData);
+  if (kdaHasData){
+    kdaChart = new Chart(document.getElementById("kdaChart"), {
+      type: "line",
+      data: { labels, datasets: [{ label: "Kills", data: kills.map(v => Number.isFinite(v) ? v : null), tension: 0.25 }, { label: "Deaths", data: deaths.map(v => Number.isFinite(v) ? v : null), tension: 0.25 }, { label: "Assists", data: assists.map(v => Number.isFinite(v) ? v : null), tension: 0.25 }] },
+      options: { responsive: true, maintainAspectRatio: true }
+    });
+  }
+}
+
+function clearMatchSelection(){
+  document.getElementById("matchDetailCard").classList.add("hidden");
+  document.querySelectorAll("#matchTable tbody tr").forEach(row => row.classList.remove("selected-row"));
+  destroyMatchCharts();
+}
+
+function renderMatchDetail(match, index){
+  document.getElementById("matchDetailCard").classList.remove("hidden");
+  document.getElementById("matchDetailTitle").textContent = `Match ${index + 1} Details`;
+  document.getElementById("matchDetailSubtitle").textContent = `${match.map || "-"} • ${match.scoreline || "-"}${match.notes ? " • " + match.notes : ""}`;
+  document.getElementById("detailMap").textContent = match.map || "-";
+  document.getElementById("detailScore").textContent = match.scoreline || "-";
+  document.getElementById("detailKDA").textContent = `${match.kills ?? 0}/${match.deaths ?? 0}/${match.assists ?? 0}`;
+  document.getElementById("detailHS").textContent = Number.isFinite(Number(match.hs_percent)) ? `${Number(match.hs_percent).toFixed(1)}%` : "-";
+  document.getElementById("detailACS").textContent = Number.isFinite(Number(match.acs)) ? Number(match.acs).toFixed(1) : "-";
+  document.getElementById("detailReaction").textContent = formatMsFromSeconds(Number(match.avg_reaction_time));
+
+  document.querySelectorAll("#matchTable tbody tr").forEach((row, i) => row.classList.toggle("selected-row", i === index));
+
+  destroyMatchCharts();
+
+  const reactionTimes = Array.isArray(match.reaction_times) ? match.reaction_times.map(Number).filter(Number.isFinite) : [];
+  toggleEmpty("matchReactionChart", "matchReactionEmpty", reactionTimes.length === 0);
+  if (reactionTimes.length){
+    matchReactionChart = new Chart(document.getElementById("matchReactionChart"), {
+      type: "line",
+      data: { labels: reactionTimes.map((_, i) => `Engagement ${i + 1}`), datasets: [{ label: "Reaction Time (ms)", data: reactionTimes.map(v => Math.round(v * 1000)), tension: 0.25 }] },
+      options: { responsive: true, maintainAspectRatio: true }
+    });
+  }
+
+  const placementValues = Array.isArray(match.crosshair_placements) ? match.crosshair_placements : [];
+  const placementMap = {
+    "HIGHER than head": 2,
+    "ON LEVEL with head": 2,
+    "LOWER than head": 1
+  };
+  const placementHasData = placementValues.length > 0;
+  toggleEmpty("matchSummaryChart", "matchSummaryEmpty", !placementHasData);
+  if (placementHasData){
+    matchSummaryChart = new Chart(document.getElementById("matchSummaryChart"), {
+      type: "line",
+      data: {
+        labels: placementValues.map((_, i) => `Engagement ${i + 1}`),
+        datasets: [{
+          label: "Crosshair Placement",
+          data: placementValues.map(v => placementMap[v] ?? null),
+          tension: 0.25
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        scales: {
+          y: {
+            min: 0.5,
+            max: 3.5,
+            ticks: {
+              stepSize: 1,
+              callback: function(value) {
+                if (value === 3) return "Higher";
+                if (value === 2) return "On level";
+                if (value === 1) return "Lower";
+                return "";
+              }
+            }
+          }
+        },
+        plugins: {
+          tooltip: {
+            callbacks: {
+              label: function(context) {
+                const idx = context.dataIndex;
+                return placementValues[idx] || "";
+              }
+            }
+          }
+        }
+      }
+    });
+  }
+}
+
+function renderTable(matches){
+  const tbody = document.querySelector("#matchTable tbody");
+  tbody.innerHTML = "";
+  if (!matches.length){
+    document.getElementById("tableEmpty").style.display = "block";
+    clearMatchSelection();
+    return;
+  }
+  document.getElementById("tableEmpty").style.display = "none";
+
+  matches.forEach((m, i) => {
+    const tr = document.createElement("tr");
+    tr.className = "clickable-row";
+    tr.innerHTML = `
+      <td>${i + 1}</td>
+      <td>${m.map ?? "-"}</td>
+      <td>${m.scoreline ?? "-"}</td>
+      <td>${m.kills ?? 0} / ${m.deaths ?? 0} / ${m.assists ?? 0}</td>
+      <td>${Number.isFinite(Number(m.hs_percent)) ? Number(m.hs_percent).toFixed(1) + "%" : "-"}</td>
+      <td>${Number.isFinite(Number(m.acs)) ? Number(m.acs).toFixed(1) : "-"}</td>
+      <td>${formatMsFromSeconds(Number(m.avg_reaction_time))}</td>
+      <td>${m.total_engagements ?? "-"}</td>
+      <td>${m.avg_crosshair_placement ?? "-"}</td>
+      <td>${m.notes ?? ""}</td>`;
+    tr.addEventListener("click", () => renderMatchDetail(m, i));
+    tbody.appendChild(tr);
+  });
+}
+
+function renderUser(userKey){
+  const user = allUsers[userKey];
+  if (!user){
+    document.getElementById("playerName").textContent = "-";
+    document.getElementById("playerTag").textContent = "-";
+    document.getElementById("totalMatches").textContent = "0";
+    document.getElementById("avgReaction").textContent = "-";
+    document.getElementById("avgHS").textContent = "-";
+    document.getElementById("avgACS").textContent = "-";
+    renderTable([]);
+    buildCharts([]);
+    return;
+  }
+
+  const matches = Array.isArray(user.matches) ? user.matches : [];
+  document.getElementById("playerName").textContent = user.name || userKey;
+  document.getElementById("playerTag").textContent = user.tag || "-";
+  document.getElementById("totalMatches").textContent = matches.length;
+
+  const avgReaction = average(matches.map(m => Number(m.avg_reaction_time)));
+  const avgHS = average(matches.map(m => Number(m.hs_percent)));
+  const avgACS = average(matches.map(m => Number(m.acs)));
+
+  document.getElementById("avgReaction").textContent = avgReaction !== null ? formatMsFromSeconds(avgReaction) : "-";
+  document.getElementById("avgHS").textContent = avgHS !== null ? `${formatNumber(avgHS, 1)}%` : "-";
+  document.getElementById("avgACS").textContent = avgACS !== null ? formatNumber(avgACS, 1) : "-";
+
+  renderTable(matches);
+  buildCharts(matches);
+  clearMatchSelection();
+}
+
+async function loadDefaultJson(){
+  try {
+    const response = await fetch("users.json");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    allUsers = data;
+    document.getElementById("dataStatus").textContent = `${Object.keys(allUsers).length} users loaded`;
+    populateUserSelect(getUserEntries());
+    renderUser("");
+  } catch (err){
+    document.getElementById("dataStatus").textContent = "Load failed";
+    alert("Could not load users.json automatically. Use the file picker instead, or run a local server. Error: " + err.message);
+  }
+}
+
+document.getElementById("loadDefaultBtn").addEventListener("click", loadDefaultJson);
+document.getElementById("fileInput").addEventListener("change", async (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    allUsers = JSON.parse(text);
+    document.getElementById("dataStatus").textContent = `${Object.keys(allUsers).length} users loaded`;
+    populateUserSelect(getUserEntries());
+    renderUser("");
+  } catch (err){
+    alert("Invalid JSON file: " + err.message);
+  }
+});
+document.getElementById("searchInput").addEventListener("input", (e) => {
+  populateUserSelect(filteredUserEntries(e.target.value));
+});
+document.getElementById("userSelect").addEventListener("change", (e) => {
+  renderUser(e.target.value);
+});
+document.getElementById("clearMatchSelectionBtn").addEventListener("click", clearMatchSelection);
+</script>
+</body>
+</html>
