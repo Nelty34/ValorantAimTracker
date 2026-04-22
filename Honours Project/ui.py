@@ -2,7 +2,7 @@ import PySimpleGUI as sg
 import json
 import os
 from pathlib import Path
-from ValorantAimTracker import detect_enemies_in_video, detect_enemies_in_video_single_threaded
+from ValorantAimTracker import detect_enemies_in_video
 import multiprocessing as mp
 
 # Set theme
